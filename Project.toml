@@ -1,0 +1,26 @@
+name = "NonlocalArrays"
+uuid = "ed46501b-9a13-4018-9924-b64096875636"
+authors = ["Nikita <nefedkin@phystech.edu>"]
+version = "0.1.0"
+
+[deps]
+AtomicArrays = "b789d723-f61d-49f3-8919-75e0f1958cbe"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+QuantumOptics = "6e0679c1-51ea-5a7c-ac74-d61b76210b0c"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+
+[compat]
+AtomicArrays = "0.3.0"
+CSV = "0.10.15"
+CairoMakie = "0.12.17"
+DataFrames = "1.7.0"
+GLMakie = "0.10.17"
+LinearAlgebra = "1.11.0"
+ProgressMeter = "1.10.2"
+QuantumOptics = "1.2.1"
+Revise = "3.6.4"
