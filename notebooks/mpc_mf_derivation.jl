@@ -8,7 +8,7 @@ using InteractiveUtils
 begin
 	using QuantumOptics
 	using LinearAlgebra
-	# using ModelingToolkit, OrdinaryDiffEq, Statistics
+	using ModelingToolkit, OrdinaryDiffEq
 	using QuantumCumulants
 	using Plots, LaTeXStrings
 end
@@ -18,10 +18,187 @@ md"""
 # Meanfield equations derivation
 """
 
+# ╔═╡ 219edbc2-aab1-4ade-9644-45a5fbab89f7
+# ╠═╡ disabled = true
+#=╠═╡
+# Calculating missing parameters
+begin
+	w_m1_ = [0.0 for i=1:N_qubits]
+	w_0_ = [0.0 for i=1:N_qubits]
+	w_p1_ = [0.0 for i=1:N_qubits]
+	g_m1_ = [0.0 for i=1:N_qubits]
+	g_0_ = [0.0 for i=1:N_qubits]
+	g_p1_ = [0.0 for i=1:N_qubits]
+	Γ_m1_0_ = [            
+		0.0            0.0+0.0im        -0.0+0.0im  -0.00333182+0.0im;
+        -0.0+0.0im            0.0     0.00333182-0.0im         -0.0+0.0im;
+         0.0+0.0im  0.00333182+0.0im            0.0             0.0+0.0im;
+ -0.00333182+0.0im         0.0+0.0im        -0.0+0.0im             0.0]
+	Γ_m1_p1_ = [            
+		0.0       -0.018361+0.0im  1.07657e-18+0.0im  -0.00235595+0.0im;
+   -0.018361+0.0im             0.0     -0.00235595+0.0im  1.07657e-18+0.0im;
+ 1.07657e-18+0.0im  -0.00235595+0.0im             0.0       -0.018361+0.0im;
+ -0.00235595+0.0im  1.07657e-18+0.0im    -0.018361+0.0im             0.0]
+	Γ_0_p1_ = [
+		0.0            -0.0+0.0im         -0.0+0.0im  0.00333182-0.0im;
+        0.0+0.0im             0.0     -0.00333182+0.0im        -0.0+0.0im;
+        0.0+0.0im  -0.00333182+0.0im             0.0           -0.0+0.0im;
+ 0.00333182+0.0im          0.0+0.0im          0.0+0.0im            0.0
+	]
+	Γ_m1_m1_ = [
+	0.0  -0.00687258+0.0im   -0.0252336+0.0im   -0.0135151+0.0im;
+ -0.00687258-0.0im    0.0   -0.0135151-0.0im   -0.0252336+0.0im;
+  -0.0252336+0.0im   -0.0135151+0.0im    0.0  -0.00687258+0.0im;
+  -0.0135151-0.0im   -0.0252336+0.0im  -0.00687258-0.0im    0.0
+	]
+	Γ_p1_p1_ = [
+	0.0  -0.00687258-0.0im   -0.0252336+0.0im   -0.0135151-0.0im;
+ -0.00687258+0.0im    0.0   -0.0135151+0.0im   -0.0252336+0.0im;
+  -0.0252336+0.0im   -0.0135151-0.0im    0.0  -0.00687258-0.0im;
+  -0.0135151+0.0im   -0.0252336+0.0im  -0.00687258+0.0im    0.0
+	]
+	Γ_0_0_ = [
+	0.0  -0.0252336+0.0im   0.0114884-0.0im  -0.0111591-0.0im;
+ -0.0252336+0.0im   0.0  -0.0111591-0.0im   0.0114884-0.0im;
+  0.0114884+0.0im  -0.0111591+0.0im   0.0  -0.0252336+0.0im;
+ -0.0111591+0.0im   0.0114884+0.0im  -0.0252336+0.0im   0.0
+	]
+	Ω_m1_0_ = [            
+		0.0           0.0+0.0im        0.0+0.0im  -0.0040506+0.0im;
+        0.0+0.0im           0.0     0.0040506-0.0im         0.0+0.0im;
+        0.0+0.0im  0.0040506+0.0im           0.0            0.0+0.0im;
+ -0.0040506+0.0im        0.0+0.0im        0.0+0.0im            0.0]
+	Ω_m1_p1_ = [            
+		0.0       0.00141333+0.0im  -4.21686e-19+0.0im   -0.00286421+0.0im;
+   0.00141333+0.0im              0.0      -0.00286421+0.0im  -4.21686e-19+0.0im;
+ -4.21686e-19+0.0im   -0.00286421+0.0im              0.0       0.00141333+0.0im;
+  -0.00286421+0.0im  -4.21686e-19+0.0im    0.00141333+0.0im              0.0]
+	Ω_0_p1_ = [
+		0.0            0.0+0.0im         0.0+0.0im  0.0040506-0.0im;
+       0.0+0.0im            0.0     -0.0040506+0.0im        0.0+0.0im;
+       0.0+0.0im  -0.0040506+0.0im            0.0           0.0+0.0im;
+ 0.0040506+0.0im         0.0+0.0im         0.0+0.0im           0.0
+	]
+	Ω_m1_m1_ = [
+	0.0+0.0im   0.00847049+0.0im   0.00988382+0.0im  -0.00548975+0.0im;
+  0.00847049+0.0im          0.0+0.0im  -0.00548975-0.0im   0.00988382+0.0im;
+  0.00988382+0.0im  -0.00548975+0.0im          0.0+0.0im   0.00847049+0.0im;
+ -0.00548975-0.0im   0.00988382+0.0im   0.00847049+0.0im          0.0+0.0im
+	]
+	Ω_p1_p1_ = [
+	0.0+0.0im   0.00847049+0.0im   0.00988382+0.0im  -0.00548975-0.0im;
+  0.00847049+0.0im          0.0+0.0im  -0.00548975+0.0im   0.00988382+0.0im;
+  0.00988382+0.0im  -0.00548975-0.0im          0.0+0.0im   0.00847049+0.0im;
+ -0.00548975+0.0im   0.00988382+0.0im   0.00847049+0.0im          0.0+0.0im
+	]
+	Ω_0_0_ = [
+	0.0+0.0im   0.00988382+0.0im   0.00705716+0.0im  -0.00262555-0.0im;
+  0.00988382+0.0im          0.0+0.0im  -0.00262555-0.0im   0.00705716+0.0im;
+  0.00705716+0.0im  -0.00262555+0.0im          0.0+0.0im   0.00988382+0.0im;
+ -0.00262555+0.0im   0.00705716+0.0im   0.00988382+0.0im          0.0+0.0im;
+	]
+	γ_ = [0.0833333 for i=1:N_qubits]
+end
+  ╠═╡ =#
+
+# ╔═╡ 18480eba-f392-48a6-a852-c2c6834b97e6
+# ╠═╡ disabled = true
+#=╠═╡
+begin
+	# list of symbolic indexed parameters
+	w_m1_i = [w_m1(i) for i=1:N_qubits]
+	w_0_i = [w_0(i) for i=1:N_qubits]
+	w_p1_i = [w_p1(i) for i=1:N_qubits]
+	Γ_m1_0_ij = [Γ_m1_0(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Γ_m1_p1_ij = [Γ_m1_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Γ_0_p1_ij = [Γ_0_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Γ_m1_m1_ij = [Γ_m1_m1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Γ_p1_p1_ij = [Γ_p1_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Γ_0_0_ij = [Γ_0_0(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_m1_0_ij = [Ω_m1_0(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_m1_p1_ij = [Ω_m1_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_0_p1_ij = [Ω_0_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_m1_m1_ij = [Ω_m1_m1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_p1_p1_ij = [Ω_p1_p1(i,j) for i=1:N_qubits for j=1:N_qubits]
+	Ω_0_0_ij = [Ω_0_0(i,j) for i=1:N_qubits for j=1:N_qubits]
+	g_m1_i = [g_m1(i) for i=1:N_qubits]
+	g_0_i = [g_0(i) for i=1:N_qubits]
+	g_p1_i = [g_p1(i) for i=1:N_qubits]
+	gc_m1_i = [gc_m1(i) for i=1:N_qubits]
+	gc_0_i = [gc_0(i) for i=1:N_qubits]
+	gc_p1_i = [gc_p1(i) for i=1:N_qubits]
+	γ_i = [γ(i) for i=1:N_qubits]
+end
+  ╠═╡ =#
+
+# ╔═╡ fa5f7ccc-0990-4d15-a8c0-4721f90e39b5
+# ╠═╡ disabled = true
+#=╠═╡
+begin
+	eqs_comp = complete(eqs) #automatically complete the system
+	test0 = 1
+end
+  ╠═╡ =#
+
+# ╔═╡ 756cba3f-8a19-4dd7-a6c9-cb918d05f77c
+# ╠═╡ disabled = true
+#=╠═╡
+# Build an ODESystem out of the MeanfieldEquations
+begin
+	me_comp = evaluate(eqs_comp; limits=(N=>N_qubits))
+	@named sys = ODESystem(me_comp)
+	print("Model is built")
+end
+  ╠═╡ =#
+
+# ╔═╡ 0aa333ff-4744-4946-8645-b47eb6a656ec
+#=╠═╡
+begin
+	# initial state
+	u0 = zeros(ComplexF64, length(me_comp))
+	u0[4*N_qubits+1:5*N_qubits] .= 1.0 + 0.0im
+
+	# list of parameters
+	ps = [w_m1_i; w_0_i; w_p1_i; 
+		Γ_m1_0_ij; Γ_m1_p1_ij; Γ_0_p1_ij; 
+		Γ_m1_m1_ij; Γ_p1_p1_ij; Γ_0_0_ij;
+		Ω_m1_0_ij; Ω_m1_p1_ij; Ω_0_p1_ij; 
+		Ω_m1_m1_ij; Ω_p1_p1_ij; Ω_0_0_ij;
+		g_m1_i; g_0_i; g_p1_i; gc_m1_i; gc_0_i; gc_p1_i;
+		γ_i
+	]
+	pn = collect(Iterators.flatten([
+		w_m1_, w_0_, w_p1_, 
+		Γ_m1_0_, Γ_m1_p1_, Γ_0_p1_, Γ_m1_m1_, Γ_p1_p1_, Γ_0_0_,
+		Ω_m1_0_, Ω_m1_p1_, Ω_0_p1_, Ω_m1_m1_, Ω_p1_p1_, Ω_0_0_,
+		g_m1_, g_0_, g_p1_, conj.(g_m1_), conj.(g_0_), conj.(g_p1_),
+		γ_
+	]))
+	p0 = ps .=> pn
+	tend = 200.
+	tlist = range(0, tend, 200)
+	
+	prob = ODEProblem(sys,u0,(0.0,tend),p0)
+	sol = solve(prob)
+	# sol = solve(prob, Kvaerno5(autodiff=false), alg_hints=[:stiff], reltol=1e-8, abstol=1e-8, maxiters=1e7, saveat=tlist)
+end
+  ╠═╡ =#
+
+# ╔═╡ 80b600a8-83a2-4022-8414-6c27727f1e00
+typeof(rates)
+
+# ╔═╡ 56e31a31-3332-40d2-b251-cf82463e0309
+typeof(J)
+
+# ╔═╡ af13e83e-0071-4668-ab79-bf03470fd452
+typeof(Sm(1))
+
 # ╔═╡ 4f9dda3b-c5df-4b2b-9045-5045ff012b48
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	# Parameters
-	N_qubits = 2 #number of qubits
+	N_qubits = 4 #number of qubits
 	@cnumbers N M
 
 	# Hilbertspace
@@ -49,8 +226,7 @@ begin
 	gc_m1(i) = IndexedVariable(Symbol("g^{(-1)*}"), i)
 	gc_0(i) = IndexedVariable(Symbol("g^{(0)*}"), i)
 	gc_p1(i) = IndexedVariable(Symbol("g^{(+1)*}"), i)
-
-	γ(α, β) = IndexedVariable(:γ, α, β)
+	γ(i) = IndexedVariable(Symbol("\\gamma"), i)
 
 	i = Index(h, :i, N, h)
 	j = Index(h, :j, N, h)
@@ -67,11 +243,11 @@ begin
 	s_p1(i) = IndexedOperator(Transition(h,:J,:g,Symbol("\\sigma_+")), i)
 
 end
-
-# ╔═╡ 5be84dd3-b236-4c02-b6b1-5db829114630
-s_p1(1)'
+  ╠═╡ =#
 
 # ╔═╡ 2e8cc958-b247-4e75-90d5-a3f274ac6d39
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	# Hamiltonian
 
@@ -81,52 +257,112 @@ begin
 	H_f = -∑(g_m1(i)*s_m1(i) + gc_m1(i)*s_m1(i)' + 
 			 g_0(i)*s_0(i) + gc_0(i)*s_0(i)' +
 			 g_p1(i)*s_p1(i) + gc_p1(i)*s_p1(i)', i)
-	H_dd = ∑(Ω_m1_m1(i,j)*s_m1(i)'*s_m1(j) + 
-			 Ω_0_0(i,j)*s_0(i)'*s_0(j) +
-			 Ω_p1_p1(i,j)*s_p1(i)'*s_p1(j) + 
-			 Ω_m1_0(i,j)*s_m1(i)'*s_0(j) + 
-			 Ω_m1_0(i,j)*s_0(i)'*s_m1(j) +
-			 Ω_m1_p1(i,j)*s_m1(i)'*s_p1(j) + 
-			 Ω_m1_p1(i,j)*s_p1(i)'*s_m1(j) +
-			 Ω_0_p1(i,j)*s_0(i)'*s_p1(j) + 
-			 Ω_0_p1(i,j)*s_p1(i)'*s_0(j), j, i)
-	H = H_a + H_f #+ H_dd
+	H_dd = ∑((Ω_m1_m1(i,j) - 0.5im*Γ_m1_m1(i,j))*s_m1(i)'*s_m1(j) + 
+			 (Ω_0_0(i,j) - 0.5im*Γ_0_0(i,j))*s_0(i)'*s_0(j) +
+			 (Ω_p1_p1(i,j) - 0.5im*Γ_p1_p1(i,j))*s_p1(i)'*s_p1(j) + 
+			 (Ω_m1_0(i,j) - 0.5im*Γ_m1_0(i,j))*s_m1(i)'*s_0(j) + 
+			 (Ω_m1_0(i,j) - 0.5im*Γ_m1_0(i,j))*s_0(i)'*s_m1(j) +
+			 (Ω_m1_p1(i,j) - 0.5im*Γ_m1_p1(i,j))*s_m1(i)'*s_p1(j) + 
+			 (Ω_m1_p1(i,j) - 0.5im*Γ_m1_p1(i,j))*s_p1(i)'*s_m1(j) +
+			 (Ω_0_p1(i,j) - 0.5im*Γ_0_p1(i,j))*s_0(i)'*s_p1(j) + 
+			 (Ω_0_p1(i,j) - 0.5im*Γ_0_p1(i,j))*s_p1(i)'*s_0(j), j, i)
+	H_nh = ∑(-1im*γ(i)*(s_m1(i)'*s_m1(i) + s_0(i)'*s_0(i) + s_p1(i)'*s_p1(i)), i)
+	H = H_a + H_f + H_dd# + H_nh
 	
 	# Jumps
 	J = [s_m1(i), s_0(i), s_p1(i)]
 	
 	# Rates
-	rates = [γ(α,β)]
+	rates = [γ(i), γ(i), γ(i)]
 end
+  ╠═╡ =#
 
 # ╔═╡ 6daae3ae-4db7-4156-871c-d086fae8583d
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	# list of operators
 	n_order = 1
-	ops = (n_order > 1) ? [s_m1(k), s_m1(k)'*s_m1(l)] : [s_m1(k)]
+	ops = (n_order > 1) ? [s_m1(k), s_m1(k)'*s_m1(l)] : [s_m1(k),s_0(k),s_p1(k),
+		s_m1(k)'*s_m1(k), s_0(k)'*s_0(k), s_p1(k)'*s_p1(k),
+		s_m1(k)'*s_0(k), s_m1(k)'*s_p1(k),s_0(k)'*s_p1(k)
+	]
 	
-	# eqs = meanfield(ops, H, J; rates=rates, order=n_order)
-	eqs = meanfield(ops, H; order=n_order, simplify=true)
+	eqs = meanfield(ops, H, J; rates=rates, order=n_order, simplify=true)
+	# eqs = meanfield(ops, H; order=n_order, simplify=true)
+	test = 1
+end
+  ╠═╡ =#
 
+# ╔═╡ cc4fe93b-6ff4-405e-8b7e-f88fd22f8a95
+begin
+# create list of operators
+S(i) = [Sx(i), Sy(i), Sz(i)]
+SiSi(i) = [Sx(i)Sx(i), Sx(i)Sy(i), Sx(i)Sz(i), Sy(i)Sy(i), Sy(i)Sz(i), Sz(i)Sz(i)]
+ops = []; [push!(ops, S(i)...) for i=1:M]
+[push!(ops, SiSi(i)...) for i=1:M]
+for i=1:M, j=i:M
+    if i≠j
+        for α=1:3, β=1:3
+            push!(ops, S(i)[α]*S(j)[β])
+        end
+    end
+end
+println("Number of equations = $(length(ops))")
+
+# derive equations
+eqs = meanfield(ops,H,J;rates=rates,order=2)
+meanfield(Sz(1),H,J;rates=rates,order=2)
 end
 
-# ╔═╡ fa5f7ccc-0990-4d15-a8c0-4721f90e39b5
-eqs_comp = complete(eqs) #automatically complete the system
+# ╔═╡ 81ac61f6-e8a9-480e-bad2-2a9c3b1ab96a
+begin
+M_p = 2 # number of pumped spins
+M_np = 2 # number of non-pumped spins
+M = M_p + M_np
 
-# ╔═╡ 756cba3f-8a19-4dd7-a6c9-cb918d05f77c
+# Hilbert space
+h_spin(i) = SpinSpace("spin_$(i)")
+h = tensor([h_spin(i) for i=1:M]...)
 
+# Operators
+Sx(i) = Spin(h, "S$(i)", 1, i)
+Sy(i) = Spin(h, "S$(i)", 2, i)
+Sz(i) = Spin(h, "S$(i)", 3, i)
+
+Sm(i) = (Sx(i) - 1im*Sy(i))
+Sp(i) = (Sx(i) + 1im*Sy(i))
+
+# Paramter
+Ω(i,j) = i>j ? cnumber("Ω_$(j)_$(i)") : cnumber("Ω_$(i)_$(j)")
+Γ(i,j) = i>j ? cnumber("Γ_$(j)_$(i)") : cnumber("Γ_$(i)_$(j)")
+end
+
+# ╔═╡ a0599491-5e06-49aa-b8ea-8d222c74f9a2
+begin
+# Hamiltonian
+H = sum( (i≠j)*Ω(i,j)*Sp(i)*Sm(j) for i=1:M for j=1:M)
+
+# Jump operators and rate matrix
+J = [Sm(c1) for c1=1:M]
+rates = [Γ(c1,c2) for c1=1:M, c2=1:M]
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 QuantumCumulants = "35bcea6d-e19f-57db-af74-8011de6c7255"
 QuantumOptics = "6e0679c1-51ea-5a7c-ac74-d61b76210b0c"
 
 [compat]
 LaTeXStrings = "~1.4.0"
+ModelingToolkit = "~9.43.0"
+OrdinaryDiffEq = "~6.92.0"
 Plots = "~1.40.9"
 QuantumCumulants = "~0.3.5"
 QuantumOptics = "~1.2.1"
@@ -136,9 +372,9 @@ QuantumOptics = "~1.2.1"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.3"
+julia_version = "1.11.4"
 manifest_format = "2.0"
-project_hash = "9d2a4d9e83a2b6202feaf1dab07a5c86087135ed"
+project_hash = "0f064dae2a87a56c19d93e9f2836156546cc0182"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "fb97701c117c8162e84dfcf80215caa904aef44f"
@@ -1634,7 +1870,7 @@ version = "0.3.27+1"
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
-version = "0.8.1+2"
+version = "0.8.1+4"
 
 [[deps.OpenSSL]]
 deps = ["BitFlags", "Dates", "MozillaCACerts_jll", "OpenSSL_jll", "Sockets"]
@@ -1679,9 +1915,9 @@ version = "1.8.0"
 
 [[deps.OrdinaryDiffEq]]
 deps = ["ADTypes", "Adapt", "ArrayInterface", "DataStructures", "DiffEqBase", "DocStringExtensions", "EnumX", "ExponentialUtilities", "FastBroadcast", "FastClosures", "FillArrays", "FiniteDiff", "ForwardDiff", "FunctionWrappersWrappers", "InteractiveUtils", "LineSearches", "LinearAlgebra", "LinearSolve", "Logging", "MacroTools", "MuladdMacro", "NonlinearSolve", "OrdinaryDiffEqAdamsBashforthMoulton", "OrdinaryDiffEqBDF", "OrdinaryDiffEqCore", "OrdinaryDiffEqDefault", "OrdinaryDiffEqDifferentiation", "OrdinaryDiffEqExplicitRK", "OrdinaryDiffEqExponentialRK", "OrdinaryDiffEqExtrapolation", "OrdinaryDiffEqFIRK", "OrdinaryDiffEqFeagin", "OrdinaryDiffEqFunctionMap", "OrdinaryDiffEqHighOrderRK", "OrdinaryDiffEqIMEXMultistep", "OrdinaryDiffEqLinear", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqLowStorageRK", "OrdinaryDiffEqNonlinearSolve", "OrdinaryDiffEqNordsieck", "OrdinaryDiffEqPDIRK", "OrdinaryDiffEqPRK", "OrdinaryDiffEqQPRK", "OrdinaryDiffEqRKN", "OrdinaryDiffEqRosenbrock", "OrdinaryDiffEqSDIRK", "OrdinaryDiffEqSSPRK", "OrdinaryDiffEqStabilizedIRK", "OrdinaryDiffEqStabilizedRK", "OrdinaryDiffEqSymplecticRK", "OrdinaryDiffEqTsit5", "OrdinaryDiffEqVerner", "Polyester", "PreallocationTools", "PrecompileTools", "Preferences", "RecursiveArrayTools", "Reexport", "SciMLBase", "SciMLOperators", "SciMLStructures", "SimpleNonlinearSolve", "SimpleUnPack", "SparseArrays", "SparseDiffTools", "Static", "StaticArrayInterface", "StaticArrays", "TruncatedStacktraces"]
-git-tree-sha1 = "f3021a68203b11e85265bdb3680b88d87ad232be"
+git-tree-sha1 = "798f5e1a1f8b5a1bbba1e6134b77a77ccc509678"
 uuid = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
-version = "6.91.0"
+version = "6.92.0"
 
 [[deps.OrdinaryDiffEqAdamsBashforthMoulton]]
 deps = ["ADTypes", "DiffEqBase", "FastBroadcast", "MuladdMacro", "OrdinaryDiffEqCore", "OrdinaryDiffEqLowOrderRK", "Polyester", "RecursiveArrayTools", "Reexport", "Static"]
@@ -3055,10 +3291,18 @@ version = "1.4.1+2"
 # ╟─5236bf7c-f392-11ef-3474-132340cd7a89
 # ╠═dea593c2-1bd4-4e3f-ac2f-61fd39e7a935
 # ╠═4f9dda3b-c5df-4b2b-9045-5045ff012b48
-# ╠═5be84dd3-b236-4c02-b6b1-5db829114630
 # ╠═2e8cc958-b247-4e75-90d5-a3f274ac6d39
 # ╠═6daae3ae-4db7-4156-871c-d086fae8583d
 # ╠═fa5f7ccc-0990-4d15-a8c0-4721f90e39b5
 # ╠═756cba3f-8a19-4dd7-a6c9-cb918d05f77c
+# ╠═219edbc2-aab1-4ade-9644-45a5fbab89f7
+# ╠═18480eba-f392-48a6-a852-c2c6834b97e6
+# ╠═0aa333ff-4744-4946-8645-b47eb6a656ec
+# ╠═81ac61f6-e8a9-480e-bad2-2a9c3b1ab96a
+# ╠═a0599491-5e06-49aa-b8ea-8d222c74f9a2
+# ╠═cc4fe93b-6ff4-405e-8b7e-f88fd22f8a95
+# ╠═80b600a8-83a2-4022-8414-6c27727f1e00
+# ╠═56e31a31-3332-40d2-b251-cf82463e0309
+# ╠═af13e83e-0071-4668-ab79-bf03470fd452
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

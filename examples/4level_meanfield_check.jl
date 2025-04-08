@@ -19,6 +19,34 @@ begin
     using NonlocalArrays
 end
 
+function rotate_xy_to_xz(positions::Vector{Vector{Float64}})
+    rotation_matrix = [1.0  0.0  0.0;
+                       0.0  0.0 -1.0;
+                       0.0  1.0  0.0]
+
+    return [rotation_matrix * pos for pos in positions]
+end
+
+# Rodrigues' rotation formula
+function rotate_positions(positions::Vector{Vector{Float64}}, axis::Vector{Float64}, angle_rad::Float64)
+    # Normalize rotation axis
+    axis = axis / norm(axis)
+
+    # Skew-symmetric matrix K
+    K = [
+        0.0        -axis[3]   axis[2];
+        axis[3]     0.0      -axis[1];
+       -axis[2]     axis[1]   0.0
+    ]
+
+    # Rodrigues rotation matrix
+    rotation_matrix = I + sin(angle_rad)*K + (1 - cos(angle_rad))*(K*K)
+
+    # Apply rotation
+    return [rotation_matrix * pos for pos in positions]
+end
+
+
 function average_values(ops, rho_t)
     T = length(rho_t)  # number of time points
 
@@ -83,16 +111,9 @@ function meanfield_spherical!(du, u, p, t)
                 end
                 dsm[m,n] += -1im*conj(OmR[m1,n])*s_bar
                 dsp[m,n] += +1im*OmR[m1,n]*s_bar_p
+                dsm[m,n] += - 0.5*Gamma[n,n,m,m1]*sm[m1,n]
+                dsp[m,n] += - 0.5*Gamma[n,n,m,m1]*sp[m1,n]
                 for m2 = 1:3
-                    if m1 == m
-                        dsm[m,n] += - 0.5*Gamma[n,n,m,m2]*sm[m2,n]
-                        dsp[m,n] += - 0.5*Gamma[n,n,m,m2]*sp[m2,n]
-                    else
-                        continue
-                        # this case gives 0 because of orthogonality of states
-                        # dsm[m,n] += - 0.5*Gamma[n,n,m1,m2]*sm[m,n]*smm[m1,m2,n]
-                        # dsp[m,n] += - 0.5*Gamma[n,n,m1,m2]*sp[m,n]*smm[m2,m1,n]  # TODO: check if gamma is symmetric: m1-m2 == m2-m1
-                    end
                     for n2 = 1:N
                         if n2 == n
                             continue
@@ -120,10 +141,10 @@ function meanfield_spherical!(du, u, p, t)
                         if n1 == n
                             continue
                         end
-                        dsmm[m1,m,n] += ((1im*Omega[n1,n,m2,m1] +
+                        dsmm[m1,m,n] += ((1im*Omega[n1,n,m2,m1] -
                                           0.5*Gamma[n1,n,m2,m1])*
                                           sp[m2,n1]*sm[m,n] +
-                                         (-1im*Omega[n,n1,m,m2] +
+                                         (-1im*Omega[n,n1,m,m2] -
                                           0.5*Gamma[n,n1,m,m2] )*
                                           sp[m1,n]*sm[m2,n1])
                     end
@@ -136,38 +157,46 @@ end
 # BUILDING THE SYSTEM
 
 # Build the collection
-positions = [
-    [0.0, 0.0, 0.0],
-    [0.5, 0.0, 0.0],
-    # [20.4, 0.0, 0.0],
-    # [30.6, 0.0, 0.0]
-]
-N = length(positions)
+begin
+    # positions = [
+    #     [0.0, 0.0, 0.0],
+    #     [0.5, 0.0, 0.0],
+    #     # [20.4, 0.0, 0.0],
+    #     # [30.6, 0.0, 0.0]
+    # ]
+    a = 0.6
+    positions = AtomicArrays.geometry.rectangle(a, a; Nx=2, Ny=2)
+    positions = rotate_xy_to_xz(positions)
+    N = length(positions)
 
-pols = AtomicArrays.polarizations_spherical(N)
-gam = [AtomicArrays.gammas(0.25)[m] for m=1:3, j=1:N]
-# deltas = [0.0 for i = 1:N]
-# deltas = [0.0, 0.0, 0.0, 0.0]
-deltas = [0.0, 0.01]
+    pols = AtomicArrays.polarizations_spherical(N)
+    gam = [AtomicArrays.gammas(0.25)[m] for m=1:3, j=1:N]
+    deltas = [0.0 for i = 1:N]
+    # deltas = [0.0, 0.0, 0.0, 0.0]
+    # deltas = [0.0, 0.01]
 
-coll = AtomicArrays.FourLevelAtomCollection(positions;
-    deltas = deltas,
-    polarizations = pols,
-    gammas = gam
-)
+    coll = AtomicArrays.FourLevelAtomCollection(positions;
+        deltas = deltas,
+        polarizations = pols,
+        gammas = gam
+    )
 
-# Define a plane wave field in +y direction:
-amplitude = 0.4
-k_mod = 2π
-angle_k = [0.0, π/2]  # => +y direction
-polarisation = [1.0, 1.0im, 0.0]
-pos_0 = [0.0, 0.0, 0.0]
+    # Define a plane wave field in +y direction:
+    amplitude = 0.0
+    k_mod = 2π
+    angle_k = [0.0, π/2]  # => +y direction
+    polarisation = [1.0, 0.0im, 0.0]
+    pos_0 = [0.0, 0.0, 0.0]
 
-field = AtomicArrays.field.EMField(amplitude, k_mod, angle_k, polarisation; position_0=pos_0)
-external_drive = AtomicArrays.field.rabi(field, AtomicArrays.field.plane, coll)
+    field = AtomicArrays.field.EMField(amplitude, k_mod, angle_k, polarisation; position_0=pos_0)
+    external_drive = AtomicArrays.field.rabi(field, AtomicArrays.field.plane, coll)
 
-B_f = 0.2
-w = [deltas[n]+B_f*m for m = -1:1, n = 1:N]
+    B_f = 0.0
+    w = [deltas[n]+B_f*m for m = -1:1, n = 1:N]
+    Γ = AtomicArrays.interaction.GammaTensor_4level(coll)
+    Ω = AtomicArrays.interaction.OmegaTensor_4level(coll)
+end
+
 
 # Build the Hamiltonian and jump operators
 H = AtomicArrays.fourlevel_quantum.Hamiltonian(coll; magnetic_field=B_f,
@@ -175,14 +204,15 @@ H = AtomicArrays.fourlevel_quantum.Hamiltonian(coll; magnetic_field=B_f,
                 dipole_dipole=true)
 
 Γ_fl, J_ops = AtomicArrays.fourlevel_quantum.JumpOperators(coll; flatten=true)
-Γ = AtomicArrays.interaction.GammaTensor_4level(coll)
-Ω = AtomicArrays.interaction.OmegaTensor_4level(coll)
+
+test = (B_f == 0.0) ? 1 : 2
 
 # Master equation time evolution
 begin
     b = AtomicArrays.fourlevel_quantum.basis(coll)
     # initial state => all ground
-    ψ0 = basisstate(b, [AtomicArrays.fourlevel_quantum.idx_g for i = 1:N])
+    ψ0 = basisstate(b, [(i == 1) ? AtomicArrays.fourlevel_quantum.idx_e_plus : 
+    AtomicArrays.fourlevel_quantum.idx_g for i = 1:N])
     ρ0 = dm(ψ0)
     tspan = [0.0:0.1:200.0;]
     t, rho_t = timeevolution.master_h(tspan, ψ0, H, J_ops; rates=Γ_fl)
@@ -209,9 +239,12 @@ end
 # Meanfield time dynamics
 begin
     u0 = [0.0im for i = 1:15*N]
+    for n = 1:1
+        reshape(view(u0, 2*(3*N)+1:15*N), (3, 3, N))[3,3,n] = 1.0
+    end
     tspan = (0.0, 200.0)
     # tspan = [0.0:0.1:200.0;]
-    p = [w, external_drive, Ω, Γ]
+    p = (w, external_drive, Ω, Γ)
     prob = ODEProblem(meanfield_spherical!, u0, tspan, p)
     sol = solve(prob)
 end
@@ -222,7 +255,8 @@ function plot_populations(pop_e_minus, pop_e_0, pop_e_plus, t)
     ax2 = Axis(fig[1, 2], title="m = 0", xlabel="t", ylabel="Population")
     ax3 = Axis(fig[1, 3], title="m = +1", xlabel="t", ylabel="Population")
     # Define colors for different atoms
-    colors = Makie.wong_colors(N)
+    # colors = Makie.wong_colors(N)
+    colors = cgrad(:viridis, N, categorical=true)
     # Plot sublevel m = -1
     for n in 1:N
         lines!(ax1, t, pop_e_minus[:, n], label="Atom $n", color=colors[n], linewidth=2)
@@ -240,12 +274,20 @@ function plot_populations(pop_e_minus, pop_e_0, pop_e_plus, t)
     fig
 end
 
+t = [0.0:0.1:200.0;]
+
 begin
     p_e_minus_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[1,1,j])
                     for i in t, j = 1:N]
     p_e_0_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[2,2,j])
                     for i in t, j = 1:N]
     p_e_plus_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[3,3,j])
+                    for i in t, j = 1:N]
+    s_e_minus_mf = [reshape(view(sol(i),1:3*N), (3, N))[1,j]
+                    for i in t, j = 1:N]
+    s_e_0_mf = [reshape(view(sol(i),1:3*N), (3, N))[2,j]
+                    for i in t, j = 1:N]
+    s_e_plus_mf = [reshape(view(sol(i),1:3*N), (3, N))[3,j]
                     for i in t, j = 1:N]
 end
 
@@ -256,7 +298,7 @@ let
     ax3 = Axis(f[1, 3], title="m = +1", xlabel="t", ylabel="Population")
     # Define colors for different atoms
     colors = Makie.wong_colors(N)
-    colors_mf = cgrad(:viridis, N, categorical=false)
+    colors_mf = cgrad(:viridis, N, categorical=true)
     # Plot sublevels
     for n in 1:N
         lines!(ax1, t, pop_e_minus[:,n], label="Atom $n, q", color=colors[n], linewidth=2)
