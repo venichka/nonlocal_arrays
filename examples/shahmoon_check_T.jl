@@ -1,5 +1,14 @@
 # Comparison with Shahmoon results. 2D lattice of spins: incident field and evolution
 begin
+    if pwd()[end-14:end] == "nonlocal_arrays"
+        PATH_ENV = "."
+    else
+        PATH_ENV = "../"
+    end
+    using Pkg
+    Pkg.activate(PATH_ENV)
+end
+begin
     using QuantumOptics
     using CairoMakie
     using LinearAlgebra

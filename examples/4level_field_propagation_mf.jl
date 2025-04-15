@@ -9,12 +9,12 @@ begin
 end
 
 begin
-    using Revise
+    using Revise, BenchmarkTools
     using Base.Threads
     using LinearAlgebra
     using QuantumOptics, QuantumCumulants
-    using ModelingToolkit
-    using DifferentialEquations
+    using ModelingToolkit, NonlinearSolve
+    using DifferentialEquations, Sundials
     using CairoMakie, GLMakie
     using AtomicArrays
 
@@ -72,7 +72,7 @@ end
 
 # Build the collection
 begin
-    a = 0.2; Nx = 20; Ny = 20;
+    a = 0.2; Nx = 10; Ny = 10;
     positions = AtomicArrays.geometry.rectangle(a, a; Nx=Nx, Ny=Ny,
                                 position_0=[(-Nx/2+0.5)*a,(-Ny/2+0.5)*a,0.0])
     # positions = rotate_xy_to_xz(positions)
@@ -125,6 +125,138 @@ begin
     print("Time dynamics' computed")
 end
 
+
+
+begin
+    Pkg.activate(temp=true)   # or PATH_ENV if you want to reuse your local approach
+    Pkg.add("SparseConnectivityTracer")
+    Pkg.add("ADTypes")
+    Pkg.add("SparseDiffTools")
+    Pkg.add("SparseArrays")
+
+    using SparseConnectivityTracer, ADTypes, SparseDiffTools, SparseArrays
+end
+
+# Assuming your module and needed variables are already imported
+
+# Define the steady-state problem wrapper
+# Define the steady-state problem wrapper clearly with current NonlinearSolve.jl best practices
+# Efficient steady-state solver wrapper
+
+# Cache for Jacobian sparsity patterns
+const jacobian_sparsity_cache = Dict{Tuple{Int, Int}, SparseMatrixCSC{Float64, Int}}()
+
+function steady_state_problem(A::FourLevelAtomCollection, Om_R::Array{ComplexF64,2}, B_z::Real, state0::AtomicArrays.fourlevel_meanfield.ProductState; abstol=1e-8, reltol=1e-8, maxiters=100)
+    N = state0.N
+    Omega = interaction.OmegaTensor_4level(A)
+    Gamma = interaction.GammaTensor_4level(A)
+    w = [A.atoms[n].delta + B_z*m for m = -1:1, n = 1:N]
+    p = (w, Om_R, Omega, Gamma)
+
+    # Nonlinear function defining steady-state equations
+    function f_steady!(du, u, p)
+        AtomicArrays.fourlevel_meanfield.f(du, u, p, 0.0)
+    end
+
+    # Jacobian calculation function using SparseDiffTools
+    function jacobian!(J, u, p)
+        SparseDiffTools.forwarddiff_color_jacobian!(J, (du, u)->f_steady!(du, u, p), u)
+    end
+
+    # Initial guess from provided state
+    u0 = copy(state0.data)
+    # Better initial guess via transient evolution
+    # transient_prob = ODEProblem((du,u,p,t)->f_steady!(du,u,p), state0.data, (0.0, 10.0), p)
+    # transient_sol = solve(transient_prob, VCABM5(); abstol=1e-6, reltol=1e-6)
+    # u0 = copy(transient_sol.u[end])
+
+    # Compute sparse Jacobian structure efficiently
+    # detector = TracerSparsityDetector()
+    # sparsity = jacobian_sparsity((du,u)->f_steady!(du,u,p), u0, u0, detector)
+
+    # Retrieve or compute sparse Jacobian structure efficiently
+    cache_key = (length(u0), length(p))
+    sparsity = get!(jacobian_sparsity_cache, cache_key) do
+        detector = TracerSparsityDetector()
+        jacobian_sparsity((du,u)->f_steady!(du,u,p), u0, u0, detector)
+    end
+
+    # Define NonlinearFunction explicitly with jacobian
+    nlfun = NonlinearFunction(f_steady!, jac=jacobian!, jac_prototype=sparsity)
+
+    # Define NonlinearProblem explicitly
+    prob = NonlinearProblem(nlfun, u0, p)
+
+    # Choose linear solver suitable for sparse Jacobian
+    linsolve = LinearSolve.KrylovJL_GMRES()
+
+    # Solve the nonlinear problem
+    sol = solve(prob, NewtonRaphson(linsolve=linsolve); abstol=abstol, reltol=reltol, maxiters=maxiters)
+
+    # Update the provided state with the steady-state solution
+    state0.data .= sol.u
+
+    return state0
+end
+
+# Example usage (assume definitions for `A`, `Om_R`, `B_z`, and initial state)
+state0 = AtomicArrays.fourlevel_meanfield.ProductState(N)
+steady_state_0 = steady_state_problem(coll, OmR, B_z, state0; abstol=1e-8, reltol=1e-8, maxiters=100)
+@benchmark steady_state_problem(coll, OmR, 2*B_z, state0; abstol=1e-8, reltol=1e-8, maxiters=100)
+state_mf_t[end]
+steady_state_0
+
+
+# Benchmark
+begin
+    Pkg.activate(temp=true)   # or PATH_ENV if you want to reuse your local approach
+    Pkg.add("SparseConnectivityTracer")
+    Pkg.add("ADTypes")
+
+    using SparseConnectivityTracer, ADTypes
+end
+
+begin
+    u0 = AtomicArrays.fourlevel_meanfield.ProductState(N)
+    for n = 1:1
+        reshape(view(u0.data, (3*N)+1:12*N), (3, 3, N))[3,3,n] = 0.0
+    end
+    tspan = [0.0:0.1:400.0;]
+    @btime AtomicArrays.fourlevel_meanfield.timeevolution(tspan,
+                                            coll, OmR, B_z, u0; alg=VCABM5());
+    # @btime AtomicArrays.fourlevel_meanfield.steady_state(coll, OmR, B_z, u0; alg=SSRootfind())
+end
+
+begin 
+    u0 = AtomicArrays.fourlevel_meanfield.ProductState(N)
+    for n = 1:1
+        reshape(view(u0.data, (3*N)+1:12*N), (3, 3, N))[3,3,n] = 0.0
+    end
+    tspan = (0.0, 400.0)
+    p = (w, OmR, Ω, Γ)
+    detector = TracerSparsityDetector()
+    du0 = copy(u0.data)
+    jac_sparsity = ADTypes.jacobian_sparsity(
+        (du, u) -> AtomicArrays.fourlevel_meanfield.f(du, u, p, 0.0), du0, u0.data, detector)
+    f_new = ODEFunction(AtomicArrays.fourlevel_meanfield.f; jac_prototype = float.(jac_sparsity))
+    # prob_sparse = ODEProblem(f_new, u0.data, tspan, p)
+    prob_sparse = NonlinearProblem(f_new, u0.data, p)
+    # prob = ODEProblem(AtomicArrays.fourlevel_meanfield.f, u0.data, (0.0, 400.0), p)
+    # @btime solve(prob, CVODE_BDF(linear_solver = :GMRES), save_everystep=false)
+end
+sol = solve(prob_sparse, NewtonRaphson(concrete_jac=float.(jac_sparsity)))
+@btime solve(prob_sparse, TRBDF2(), save_everystep = false);
+@btime solve(prob_sparse, KenCarp47(linsolve = KLUFactorization()),
+    save_everystep = false);
+
+
+
+
+
+
+
+
+
 # Average values
 begin
     T = length(tout)
@@ -164,25 +296,22 @@ begin
     plane = "xz"   # change this to "xz" or "yz" as desired
 
     # === Define grid parameters ===
+    n_points = 100
     factor_scale = 3.5
-    grid_min, grid_max, grid_step = -Nx*a/2*factor_scale, Nx*a/2*factor_scale, 0.02*factor_scale
+    grid_min, grid_max = -Nx*a/2*factor_scale, Nx*a/2*factor_scale
+    coord1_range = range(grid_min, grid_max; length=n_points)
+    coord2_range = range(grid_min, grid_max; length=n_points)
 
     # Depending on the plane, choose the two varying coordinates and fix the third:
     if plane == "xy"
-        coord1_range = grid_min:grid_step:grid_max  # x
-        coord2_range = grid_min:grid_step:grid_max  # y
         fixed_value = Nx*a/2 + 0.2                           # fixed z
         fixed_index = 3
         label1, label2, fixed_label = "x", "y", "z"
     elseif plane == "xz"
-        coord1_range = grid_min:grid_step:grid_max  # x
-        coord2_range = grid_min:grid_step:grid_max  # z
         fixed_value = (mod(Nx, 2) == 0) ? 0.0 : a/2          # fixed y
         fixed_index = 2
         label1, label2, fixed_label = "x", "z", "y"
     elseif plane == "yz"
-        coord1_range = grid_min:grid_step:grid_max  # y
-        coord2_range = grid_min:grid_step:grid_max  # z
         fixed_value = Nx*a/2 + 0.2                           # fixed x
         fixed_index = 1
         label1, label2, fixed_label = "y", "z", "x"
@@ -310,7 +439,7 @@ let
     scatter!(ax6, atom_coord1, atom_coord2, markersize = 8, color = :white)
     Colorbar(fig[3, 4], hm6, width = 15, height = Relative(1))
 
-    save(PATH_FIGS*"4level_E_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*".pdf", fig, px_per_unit=4)
+    # save(PATH_FIGS*"4level_E_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*".pdf", fig, px_per_unit=4)
     fig
 end
 
@@ -334,7 +463,7 @@ let
              labelsize = 20, ticklabelsize = 18,
              width = 15, height = Relative(1))
 
-    save(PATH_FIGS*"4level_I_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*".pdf", fig, px_per_unit=4)
+    # save(PATH_FIGS*"4level_I_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*".pdf", fig, px_per_unit=4)
     fig
 end
 
@@ -389,7 +518,7 @@ let
     cam3d!(ax.scene; clipping_mode = :static)
     update_cam!(ax.scene, eyeposition, lookat, upvector)
 
-    save(PATH_FIGS*"4level_I_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*"_3D.png", fig, px_per_unit=4)
+    # save(PATH_FIGS*"4level_I_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*"_3D.png", fig, px_per_unit=4)
 
     fig
 end
