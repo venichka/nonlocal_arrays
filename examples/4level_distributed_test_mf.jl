@@ -17,201 +17,7 @@ end
     using LinearSolve, DifferentialEquations, SparseArrays, AtomicArrays, NonlocalArrays
 end
 using CairoMakie, GLMakie, LinearAlgebra
-using Serialization, Printf
-
-"""
-    save_result(path, result, N, B_z, pol, amplitude, a)
-
-Serialize a result to a file with a descriptive name.
-"""
-function save_result(path::String, result,
-                     N::Int, B_z::Real,
-                     pol::String, amplitude::Float64, a::Float64)
-    filename = joinpath(path,
-        @sprintf("result_N%d_Bz%.4f_%s_E%.4f_a%.3f.bson", N, B_z, pol, amplitude, a))
-    serialize(filename, result)
-    return filename
-end
-
-"""
-    load_all_results(path)
-
-Deserialize all .bson result files in the directory.
-"""
-function load_all_results(path::String)
-    files = filter(f -> endswith(f, ".bson"), readdir(path; join=true))
-    return [deserialize(file) for file in sort(files)]
-end
-
-"""
-    parse_result_filename(filename::String)
-
-Extract parameters (N, B_z, polarization, amplitude, a) from filename string.
-"""
-function parse_result_filename(filename::String)
-    pattern = r"result_N(\d+)_Bz([-\d.]+)_([RL])_E([\d.]+)_a([\d.]+)\.bson"
-    m = match(pattern, basename(filename))
-    isnothing(m) && error("Invalid filename format: $filename")
-
-    N        = parse(Int, m.captures[1])
-    B_z      = parse(Float64, m.captures[2])
-    pol      = m.captures[3]
-    E0       = parse(Float64, m.captures[4])
-    a_val    = parse(Float64, m.captures[5])
-
-    return (; N, B_z, POLARIZATION = pol, amplitude = E0, a = a_val)
-end
-
-
-"""
-    save_sweep(path::String, data;
-               description::String = "results", kwargs...)
-
-Save any `data` object with a filename auto-generated from key-value pairs in `kwargs`,
-plus a short description. Supports Float, Tuple, Vector, and String keyword arguments.
-
-Examples:
-save_sweep(PATH_DATA, data; description="states", Bz=(0.1, 0.2), N=100, POL="R", a=0.2)
-
-Creates a file like:
-    states_Bz_0.1_to_0.2_N_100_POL_R_a_0.2.bson
-"""
-function save_sweep(path::String, data;
-                    description::String = "results", kwargs...)
-
-    mkpath(path)
-    parts = [description]
-    for (key, val) in pairs(kwargs)
-        strval = if isa(val, AbstractVector) && !isempty(val)
-            @sprintf("%s_%.3f_to_%.3f", key, minimum(val), maximum(val))
-        elseif isa(val, Tuple) && length(val) == 2
-            @sprintf("%s_%.3f_to_%.3f", key, val[1], val[2])
-        elseif isa(val, AbstractFloat)
-            @sprintf("%s_%.3f", key, val)
-        elseif isa(val, Int)
-            string(key, "_", val)
-        elseif isa(val, AbstractString)
-            string(key, "_", val)
-        else
-            error("Unsupported kwarg type for key = $key, val = $val")
-        end
-        push!(parts, strval)
-    end
-
-    filename = join(parts, "_") * ".bson"
-    filepath = joinpath(path, filename)
-    serialize(filepath, data)
-    return filepath
-end
-
-
-"""
-    load_sweep(filepath::String)
-
-Load data from a sweep result file (saved via `save_sweep`).
-"""
-load_sweep(filepath::String) = deserialize(filepath)
-
-
-# Function to extract positions from the FourLevelAtomCollection and plot them
-function plot_atoms_with_field(coll::AtomicArrays.FourLevelAtomCollection, field::AtomicArrays.field.EMField)
-    CairoMakie.activate!()
-    # Extract atom positions
-    xs = [atom.position[1] for atom in coll.atoms]
-    ys = [atom.position[2] for atom in coll.atoms]
-    zs = [atom.position[3] for atom in coll.atoms]
-
-    # Create a new figure and add a 3D axis.
-    fig = Figure(size = (800, 600))
-    ax = Axis3(fig[1, 1];
-        title = "3D Array of Atoms with Field Vectors",
-        xlabel = "x", ylabel = "y", zlabel = "z",
-        perspectiveness = 0.8
-    )
-
-    # Plot atom positions
-    scatter!(ax, xs, ys, zs; markersize = 10, color = :blue)
-
-    # Field origin
-    field_origin = Point3f(field.position_0...)
-
-    # Arrow scaling
-    k_scale = 1.0
-    pol_scale = 1.0
-
-    # k-vector arrow
-    k_arrow = Vec3f(normalize(field.k_vector)...) * k_scale
-    arrows!(ax, [field_origin], [k_arrow]; linewidth = 0.02, arrowsize = 0.04, color = :red)
-    text!(ax, "k-vector"; position = field_origin + k_arrow, align = (:center, :bottom), color = :red)
-
-    # polarization arrow
-    pol_arrow = Vec3f(real.(field.polarisation)...) * pol_scale
-    pol_arrow_im = Vec3f(imag(field.polarisation)...) * pol_scale
-    arrows!(ax, [field_origin], [pol_arrow]; linewidth = 0.02, arrowsize = 0.04, color = :green)
-    arrows!(ax, [field_origin], [pol_arrow_im]; linewidth = 0.02, arrowsize = 0.04, color = :green)
-    text!(ax, "polarization"; position = field_origin + pol_arrow, align = (:center, :top), color = :green)
-
-    return fig
-end
-
-"""
-    parse_sweep_filename(filename::String) -> Dict{String, Any}
-
-Parses filenames like:
-"steady_states_Bz_-0.200_to_0.200_num_vals_36_N_100_POL_R_E0_0.020_a_0.200_geometry_rect.bson"
-into a dictionary of parameter names and values.
-"""
-function parse_sweep_filename(filename::String)::Dict{String, Any}
-    # Remove directory components and file extension.
-    base = splitext(basename(filename))[1]
-    # Split base name on underscores.
-    tokens = split(base, '_')
-    
-    # By convention, the first token is the file prefix (with no underscores) and is discarded.
-    if length(tokens) > 1
-        tokens = tokens[2:end]
-    end
-
-    params = Dict{String, Any}()
-    i = 1
-    while i <= length(tokens)
-        # Ensure there is at least one token available for a value.
-        if i == length(tokens)
-            break
-        end
-        key = tokens[i]
-        val_token = tokens[i+1]
-        # Check if a range is indicated: key, value, "to", value.
-        if i + 2 <= length(tokens) && tokens[i+2] == "to" && i + 3 <= length(tokens)
-            try
-                v1 = parse(Float64, val_token)
-                v2 = parse(Float64, tokens[i+3])
-                params[key] = (v1, v2)
-            catch err
-                # If parsing fails, fall back to using the raw token.
-                params[key] = val_token
-            end
-            i += 4
-        else
-            # For a single value, attempt conversion.
-            iv = tryparse(Int, val_token)
-            if iv !== nothing
-                params[key] = iv
-            else
-                fv = tryparse(Float64, val_token)
-                if fv !== nothing
-                    params[key] = fv
-                else
-                    params[key] = val_token
-                end
-            end
-            i += 2
-        end
-    end
-
-    return params
-end
-
+# using Serialization, Printf
 
 
 # Define paths (used for saving data, figures, etc.)
@@ -303,14 +109,14 @@ savepath = save_sweep(PATH_DATA, results;
 
 
 # Analysis
-results_loaded = load_sweep(savepath)
+results = load_sweep(PATH_DATA*"/steady-states_Bz_-0.200_to_0.200_numvals_36_N_100_POL_R_E0_0.020_a_0.200_geometry_rect_theta_0.000.bson")
 test_dict = parse_sweep_filename(savepath)
 
 sigmas_m = map(i -> AtomicArrays.fourlevel_meanfield.sigma_matrices(results, i)[1], eachindex(results))
 sigmas_mm = map(i -> AtomicArrays.fourlevel_meanfield.sigma_matrices(results, i)[2], eachindex(results))
 
 zlim = 1*a*Nx
-trans_result = [AtomicArrays.field.transmission_reg(field, field_func, coll, sigmas_m[i]; samples=400, zlim=zlim)[1] for i = 1:6*N_procs]
+trans_result = [AtomicArrays.field.transmission_reg(field, field_func, coll, sigmas_m[i]; samples=400, zlim=zlim)[1] for i = eachindex(sigmas_m)]
 
 
 # Scattered and total field
