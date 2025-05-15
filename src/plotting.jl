@@ -1,6 +1,6 @@
 module Plotting
 
-using CairoMakie, AtomicArrays
+using CairoMakie, AtomicArrays, LinearAlgebra
 export plot_atoms_with_field,
        plot_sweep_quantity, plot_sweep_multicurve, plot_sweep_heatmap
 

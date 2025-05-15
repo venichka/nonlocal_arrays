@@ -19,6 +19,14 @@ for a monochromatic field with transverse components `Ex, Ey`.
     dop = I ≈ 0 ? 0.0 : sqrt(Q^2 + U^2 + V^2) / I
     return (I=I, Q=Q, U=U, V=V, dop=dop)
 end
+@inline function stokes(E::Vector)
+    I = abs2(E[1]) + abs2(E[2])
+    Q = abs2(E[1]) - abs2(E[2])
+    U = 2 * real(E[1] * conj(E[2]))
+    V = -2 * imag(E[1] * conj(E[2]))
+    dop = I ≈ 0 ? 0.0 : sqrt(Q^2 + U^2 + V^2) / I
+    return (I=I, Q=Q, U=U, V=V, dop=dop)
+end
 
 
 
@@ -88,14 +96,15 @@ function transmission_reflection_new(E::AtomicArrays.field.EMField,
     end
 
     # ------------------ 3. evaluate fields -----------------------------
-    Et_fwd = AtomicArrays.field.total_field(inc_wave, rfwd, E, coll, σ)
+    Et_fwd = AtomicArrays.field.total_field(inc_wave, rfwd, E, coll, σ,
+                                            E.module_k)
     Ei_fwd = inc_wave.(rfwd, Ref(E))
-    Esc_bwd = AtomicArrays.field.scattered_field(rbwd, coll, σ)
+    Esc_bwd = AtomicArrays.field.scattered_field(rbwd, coll, σ, E.module_k)
     
     # --------------- power sums --------------------------------------
     Pp_fwd = sum(abs2.(dot.(Et_fwd, Ref(e_plus ))))
     Pm_fwd = sum(abs2.(dot.(Et_fwd, Ref(e_minus))))
-    P_inc  = sum(abs2.(dot.(Ei_fwd, Ref(E.polarisation ))))           # same analyser
+    P_inc  = sum(abs2.(norm.(Ei_fwd)))           # same analyser
     Pp_bwd = sum(abs2.(dot.(Esc_bwd, Ref(e_plus ))))
     Pm_bwd = sum(abs2.(dot.(Esc_bwd, Ref(e_minus))))
 
@@ -106,6 +115,22 @@ function transmission_reflection_new(E::AtomicArrays.field.EMField,
     Tσp, Tσm = Pp_fwd/P_inc,  Pm_fwd/P_inc
     Rσp, Rσm = Pp_bwd/P_inc,  Pm_bwd/P_inc
     Ttot, Rtot = Tσp+Tσm, Rσp+Rσm
+
+    # --------------- DOP of reflected light ----------------------------
+    stokes_vec = stokes.(Esc_bwd)
+    I_tot = sum([sv.I for sv in stokes_vec])
+    Q_tot = sum([sv.Q for sv in stokes_vec])
+    U_tot = sum([sv.U for sv in stokes_vec])
+    V_tot = sum([sv.V for sv in stokes_vec])
+    dop_back = I_tot ≈ 0 ? 0.0 : sqrt(Q_tot^2 + U_tot^2 + V_tot^2) / I_tot
+    # DOP = sqrt(Q^2 + U^2 + V^2) / I
+
+    # --------------- field along ±k ----------------------------------
+    kin_normed = normalize(E.k_vector)
+    rf = zlim * kin_normed
+    rb = [rf[1], rf[2], -rf[3]]   # specular reflection
+    E_in_fwd = inc_wave(rf, E)
+    E_sc_bwd = field.scattered_field(rb, coll, σ, E.module_k)
 
     # --------------- named‑tuple output ------------------------------
     if return_powers && return_helicity
@@ -132,7 +157,7 @@ function transmission_reflection_new(E::AtomicArrays.field.EMField,
     if return_positions
         core = merge(core, (rfwd = rfwd, rbwd = rbwd))
     end
-    return (; core...)          # NamedTuple
+    return (; dop_back = dop_back, core...)          # NamedTuple
 end
 
 """
@@ -168,6 +193,7 @@ Returns
 * booleans `is_chiral, pass_dop, pass_phase`.
 """
 function chiral_mirror_metrics(Tσp, Tσm, Rσp, Rσm;
+                            #    E::Union{Nothing,AtomicArrays.field.EMField} = nothing,
                                Rσp_phase = nothing, Rσm_phase = nothing,
                                dop_back  = nothing,
                                thresh_CD::Real = 0.9,
@@ -223,161 +249,80 @@ end
 # ---------------------------------------------------------------
 #  helpers
 # ---------------------------------------------------------------
-# @inline normed(v) = v / norm(v)
+"""
+    helicity_basis(ŝ) -> (e₊, e₋)
 
-# """
-#     helicity_basis(ŝ) -> (e₊, e₋)
+Return the right‑ and left‑hand circular unit vectors **transverse** to the
+propagation direction `ŝ` (|ŝ| = 1).  Formula:
 
-# Return the right‑ and left‑hand circular unit vectors **transverse** to the
-# propagation direction `ŝ` (|ŝ| = 1).  Formula:
+    e1 = ẑ × ŝ            (or x̂ if ŝ ∥ ẑ)
+    e2 = ŝ × e1
+    e± = (e1 ± i e2)/√2
+"""
+function helicity_basis(ŝ::Vector)
+    # pick a stable transverse axis
+    if abs(ŝ[3]) < 0.999
+        e1 = normalize(cross([0.0,0.0,1.0], ŝ))
+    else
+        e1 = [1.0, 0.0, 0.0]           # beam along z → take x̂
+    end
+    e2 = cross(ŝ, e1)                        # already unit
+    e_plus  = (e1 + im*e2) / √2
+    e_minus = (e1 - im*e2) / √2
+    return e_plus, e_minus
+end
 
-#     e1 = ẑ × ŝ            (or x̂ if ŝ ∥ ẑ)
-#     e2 = ŝ × e1
-#     e± = (e1 ± i e2)/√2
-# """
-# function helicity_basis(ŝ::SVector{3})
-#     # pick a stable transverse axis
-#     if abs(ŝ[3]) < 0.999
-#         e1 = normed(cross(SVector(0.0,0.0,1.0), ŝ))
-#     else
-#         e1 = SVector(1.0, 0.0, 0.0)           # beam along z → take x̂
-#     end
-#     e2 = cross(ŝ, e1)                        # already unit
-#     e_plus  = (e1 + im*e2) / √2
-#     e_minus = (e1 - im*e2) / √2
-#     return e_plus, e_minus
-# end
+# -------------------------------------------------------------------
+# 1.  Phase of the σ⁺ / σ⁻ reflection coefficients  (normal incidence)
+# -------------------------------------------------------------------
+"""
+    reflection_phases(inc_wave, E, coll, σ;
+                      kin = SVector(0,0,1), k = 2π, R = 10)
 
-# # -------------------------------------------------------------------
-# # 1.  Phase of the σ⁺ / σ⁻ reflection coefficients  (normal incidence)
-# # -------------------------------------------------------------------
-# """
-#     reflection_phases(inc_wave, E, coll, σ;
-#                       k = 2π, R = 10) -> (φσ⁺, φσ⁻)
+Phase (rad) of σ⁺ / σ⁻ reflection coefficients for **arbitrary incidence**.
 
-# Evaluate the scattered field at the backward direction **(0,0,-R)** and
-# return the phases (in rad, wrapped to ±π) of the complex reflection
-# coefficients for σ⁺ and σ⁻, normalised to the incident amplitude.
+* `kin` – incident *wavevector* **direction** (need not be unit length);
+          specify as `SVector{3}` or `(θ,φ)` tuple (rad).
+* `k`   – vacuum wavenumber.
+* `R`   – far‑field evaluation radius.
 
-# Works for normal‑incidence beams (plane or broad Gaussian).  For oblique
-# incidence replace the two `rb`/`rf` vectors accordingly.
-# """
-# function reflection_phases(inc_wave, E, coll, σ; k::Real = 2π, R::Real = 10.0)
-#     # helicity unit vectors (x,y,z order)
-#     e_plus  = SVector(1,  im, 0) / √2
-#     e_minus = SVector(1, -im, 0) / √2
+The function evaluates the *scattered* field in the exact specular
+direction (kspec = kin reflected at z=0) and divides by the amplitude of
+the incident helicity on the forward side.
+"""
+function reflection_phases(inc_wave, E, coll, σ;
+                           R::Real = 10.0)
+    kin = E.k_vector
+    ŝ_in  = normalize(kin)
 
-#     # +z direction → incident reference amplitude
-#     rf = SVector(0.0, 0.0,  R)
-#     Ei = inc_wave(rf, E)
-#     Ei_p, Ei_m = dot(Ei, e_plus), dot(Ei, e_minus)
+    # specular reflection: flip z component
+    ŝ_ref = [ŝ_in[1], ŝ_in[2], -ŝ_in[3]]
 
-#     # −z direction → reflected scattered field
-#     rb   = SVector(0.0, 0.0, -R)
-#     Esc  = field.scattered_field(rb, coll, σ, k)
-#     Er_p, Er_m = dot(Esc, e_plus), dot(Esc, e_minus)
+    # helicity bases for forward & backward directions
+    eplus_in,  eminus_in  = helicity_basis(ŝ_in)
+    eplus_out, eminus_out = helicity_basis(ŝ_ref)
 
-#     φp = angle(Er_p / Ei_p)
-#     φm = angle(Er_m / Ei_m)
-#     return φp, φm
-# end
-# """
-#     reflection_phases(inc_wave, E, coll, σ;
-#                       kin = SVector(0,0,1), k = 2π, R = 10)
+    # field evaluation points (far field)
+    rf = R * ŝ_in         # forward
+    rb = R * ŝ_ref        # backward
 
-# Phase (rad) of σ⁺ / σ⁻ reflection coefficients for **arbitrary incidence**.
+    Ei  = inc_wave(rf, E)                       # incident field amplitude
+    Esc = field.scattered_field(rb, coll, σ, E.module_k) # reflected scattered field
 
-# * `kin` – incident *wavevector* **direction** (need not be unit length);
-#           specify as `SVector{3}` or `(θ,φ)` tuple (rad).
-# * `k`   – vacuum wavenumber.
-# * `R`   – far‑field evaluation radius.
+    # project onto helicity bases
+    Ei_p,  Ei_m  = dot(Ei,  eplus_in),  dot(Ei,  eminus_in)
+    Er_p,  Er_m  = dot(Esc, eplus_out), dot(Esc, eminus_out)
 
-# The function evaluates the *scattered* field in the exact specular
-# direction (kspec = kin reflected at z=0) and divides by the amplitude of
-# the incident helicity on the forward side.
-# """
-# function reflection_phases(inc_wave, E, coll, σ;
-#                            kin = SVector(0.0,0.0,1.0),
-#                            k::Real = 2π,
-#                            R::Real = 10.0)
+    r_p = Er_p / (Ei_p + eps())   # avoid /0
+    r_m = Er_m / (Ei_m + eps())   # avoid /0
+    φp = angle(r_p)
+    φm = angle(r_m)
 
-#     # handle (θ,φ) input
-#     if !(kin isa SVector)
-#         θ, φ = kin
-#         kin  = SVector(sin(θ)*cos(φ), sin(θ)*sin(φ), cos(θ))
-#     end
-#     ŝ_in  = normed(kin)
-#     @assert ŝ_in[3] > 0 "Incident direction must have +z component (coming from –z)"
+    # wrap to (−π, π]
+    φp = mod(φp + π, 2π) - π
+    φm = mod(φm + π, 2π) - π
 
-#     # specular reflection: flip z component
-#     ŝ_ref = SVector(ŝ_in[1], ŝ_in[2], -ŝ_in[3])
-
-#     # helicity bases for forward & backward directions
-#     eplus_in,  eminus_in  = helicity_basis(ŝ_in)
-#     eplus_out, eminus_out = helicity_basis(ŝ_ref)
-
-#     # field evaluation points (far field)
-#     rf = R * ŝ_in         # forward
-#     rb = R * ŝ_ref        # backward
-
-#     Ei  = inc_wave(rf, E)                       # incident field amplitude
-#     Esc = field.scattered_field(rb, coll, σ, k) # reflected scattered field
-
-#     # project onto helicity bases
-#     Ei_p,  Ei_m  = dot(Ei,  eplus_in),  dot(Ei,  eminus_in)
-#     Er_p,  Er_m  = dot(Esc, eplus_out), dot(Esc, eminus_out)
-
-#     φp = angle(Er_p / Ei_p)
-#     φm = angle(Er_m / Ei_m)
-
-#     # wrap to (−π, π]
-#     φp = mod(φp + π, 2π) - π
-#     φm = mod(φm + π, 2π) - π
-#     return φp, φm
-# end
-
-
-# # -------------------------------------------------------------------
-# # 2.  Degree‑of‑polarisation of the back‑scattered beam
-# # -------------------------------------------------------------------
-# """
-#     dop_back_fibonacci(inc_wave, E, coll, σ;
-#                        k = 2π, R = 10, Ndirs = 20_000) -> DOP
-
-# Integrate the Stokes parameters of the **scattered** field over the
-# backward (−z) hemisphere using `Ndirs` Fibonacci directions and return the
-# overall degree of polarisation (0 ≤ DOP ≤ 1).
-# """
-# function dop_back_fibonacci(inc_wave, E, coll, σ;
-#                             k::Real = 2π, R::Real = 10.0, Ndirs::Int = 20_000)
-
-#     θ, φ = fibonacci_angles(Ndirs)                  # forward hemi only
-#     ΔΩ   = 2π / Ndirs                               # equal solid angle
-
-#     Itot = Qtot = Utot = Vtot = 0.0
-
-#     for (th, ph) in zip(θ, φ)
-#         sinθ, cosθ = sincos(th);  sinφ, cosφ = sincos(ph)
-
-#         r̂ = SVector(sinθ*cosφ, sinθ*sinφ, -cosθ)    # -z direction
-#         rb = R * r̂
-
-#         Esc = field.scattered_field(rb, coll, σ, k)
-#         Ex, Ey = Esc[1], Esc[2]
-
-#         I = abs2(Ex) + abs2(Ey)
-#         Q = abs2(Ex) - abs2(Ey)
-#         U = 2*real(Ex*conj(Ey))
-#         V = -2*imag(Ex*conj(Ey))
-
-#         Itot += I * ΔΩ
-#         Qtot += Q * ΔΩ
-#         Utot += U * ΔΩ
-#         Vtot += V * ΔΩ
-#     end
-
-#     return Itot ≈ 0 ? 0.0 : sqrt(Qtot^2 + Utot^2 + Vtot^2) / Itot
-# end
-
+    return (r_p = r_p, r_m = r_m, φ_p = φp, φ_m = φm)
+end
 
 end

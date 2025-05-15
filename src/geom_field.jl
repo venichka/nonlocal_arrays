@@ -1,7 +1,7 @@
 module GeomField
 
 using LinearAlgebra, AtomicArrays
-export build_fourlevel_system
+export build_fourlevel_system, omega_1d_triplet, omega_2d_triplet, bands_GXMG
 
 """
     NonlocalArrays.build_fourlevel_system(; a=0.2, Nx=4, Ny=4,
@@ -93,5 +93,135 @@ function build_fourlevel_system(params::Dict{String,Any})
         angle_k = angle_k,
     )
 end
+
+# -------------------------------------------------------------------
+#  Dispersion for a Zeeman triplet (m = −1,0,+1) in periodic arrays
+#  Paste this after the existing code and 'using .interaction'
+# -------------------------------------------------------------------
+"""
+    omega_1d_triplet(k; a, μ, γ, Δ, ωc = 0.0, Nmax = 250)
+
+Collective dispersion **matrix** for an *infinite 1-D chain* of atoms.
+
+Arguments  
+* `k`     – Bloch wave number (same units as 1/a).  
+* `a`     – lattice constant.  
+* `μ`     – `Vector{SVector{3,T}}` (length 3) giving dipole orientation
+            of the m = −1,0,+1 transitions.  
+* `γ`     – `Vector{T}` (length 3) single-atom decay rates Γₘ.  
+* `Δ`     – `Vector{T}` (length 3) Zeeman detunings (ωₘ − ωc).  
+* `ωc`    – reference / carrier frequency (adds ωc ⋅ 𝟙).  
+* `Nmax`  – truncation: keep |n| ≤ Nmax in the lattice sum.
+
+Returns a **3 × 3 real matrix** ωₘₘ′(k).
+"""
+function omega_1d_triplet(k::Real, a::Real,
+                      μ::Vector{<:AbstractVector},
+                      γ::AbstractVector,
+                      Δ::AbstractVector;
+                      ωc::Real = 0.0, Nmax::Int = 250)
+
+    @assert length(μ) == 3 == length(γ) == length(Δ)
+    W = Diagonal(ωc .+ Δ) |> Matrix      # start with on-site Zeeman terms
+
+    # helper: Ω(n a) for any pair (m,m′)
+    Ω(n, m, mp) = interaction.Omega([0.0, 0.0, 0.0],
+                                    [n*a, 0.0, 0.0],
+                                    μ[m], μ[mp], γ[m], γ[mp])
+
+    for m in 1:3, mp in 1:3
+        Σ = zero(eltype(γ))
+        for n = 1:Nmax
+            Σ += 2 * Ω(n, m, mp) * cos(k*n*a)   # even in n → ×2
+        end
+        W[m, mp] += Σ
+    end
+    return W
+end
+
+
+"""
+    omega_2d_triplet(kx, ky; a, μ, γ, Δ, ωc = 0.0, Nmax = 60)
+
+Collective dispersion **matrix** for an *infinite 2-D square lattice*
+(period `a` along x and y).
+
+Arguments mirror `ω_1d_triplet`; the sum now runs over
+‖n‖₂ ≤ Nmax (excluding n = 0).
+
+Returns a 3 × 3 real matrix ωₘₘ′(k).
+"""
+function omega_2d_triplet(kx::Real, ky::Real, a::Real,
+                      μ::Vector{<:AbstractVector},
+                      γ::AbstractVector,
+                      Δ::AbstractVector;
+                      ωc::Real = 0.0, Nmax::Int = 60)
+
+    @assert length(μ) == 3 == length(γ) == length(Δ)
+    W = Diagonal(ωc .+ Δ) |> Matrix
+
+    Ω(nx, ny, m, mp) = interaction.Omega([0.0, 0.0, 0.0],
+                                         [nx*a, ny*a, 0.0],
+                                         μ[m], μ[mp], γ[m], γ[mp])
+
+    for m in 1:3, mp in 1:3
+        Σ = zero(eltype(γ))
+        for nx = -Nmax:Nmax, ny = -Nmax:Nmax
+            (nx == 0 && ny == 0) && continue
+            Σ += Ω(nx, ny, m, mp) *
+                  cos(kx*nx*a + ky*ny*a)
+        end
+        W[m, mp] += real(Σ)
+    end
+    return W
+end
+
+function bands_GXMG(a::Real,
+                    μ::Vector{<:AbstractVector},
+                    γ::AbstractVector,
+                    Δ::AbstractVector;
+                    ωc   ::Real = 0.0,
+                    Nmax ::Int  = 60,
+                    Nk   ::Int  = 200,
+                    keep_k::Bool = false)
+
+    # High-symmetry k-points (in 1/a units)
+    Γ = (0.0, 0.0)
+    X = (π/a, 0.0)
+    M = (π/a, π/a)
+    knodes = (Γ, X, M, Γ)
+
+    # helper: linear interpolation between two points
+    function segment(k1, k2)
+        (kx1, ky1), (kx2, ky2) = k1, k2
+        t = range(0.0, 1.0, Nk+1)[1:end-1]  # exclude endpoint
+        kx = kx1 .+ t .* (kx2 - kx1)
+        ky = ky1 .+ t .* (ky2 - ky1)
+        return collect(zip(kx, ky))
+    end
+
+    # build full path
+    kpath = vcat([segment(knodes[i], knodes[i+1]) for i in 1:3]...)  # 3*Nk pts
+    npts  = length(kpath)
+
+    # allocate band matrix
+    ωmat = Matrix{Float64}(undef, 3, npts)
+
+    s = zeros(Float64, npts)   # cumulative distance along the path
+    prev = first(kpath)
+    for (idx, (kx, ky)) in enumerate(kpath)
+        # diagonalise 3×3 matrix
+        ωmat[:, idx] = real(sort(eigvals(
+            omega_2d_triplet(kx, ky, a, μ, γ, Δ;
+                                  ωc = ωc, Nmax = Nmax))))
+        # path length
+        dx = hypot(kx - prev[1], ky - prev[2])
+        s[idx] = (idx == 1) ? 0.0 : s[idx-1] + dx
+        prev = (kx, ky)
+    end
+    return keep_k ? (ωmat, s) : ωmat
+end
+
+
 
 end

@@ -25,7 +25,8 @@ pars = params_to_vars!(params_dict; make_tuple=true)
 pars.ny
 
 fixed_params_mult = Dict(
-    "a" => pars.a[187],
+    # "a" => pars.a[187],
+    "a" => pars.a[121],
     # "deltas" => 0.0,
     "Bz" => 0.2,
     "amplitude" => 0.02,
@@ -46,7 +47,7 @@ fixed_params_mult_1 = Dict(
 
 fixed_params_mult_2 = Dict(
     # "a" => pars.a[24],
-    "deltas" => pars.deltas[111],
+    # "deltas" => pars.deltas[111],
     "Bz" => 0.2,
     # "POLARIZATION" => "R",
     "amplitude" => 0.02,
@@ -59,7 +60,7 @@ fixed_params_heat = Dict(
     # "a" => pars.a[24],
     # "deltas" => 0.0,
     "Bz" => 0.2,
-    "POLARIZATION" => "L",
+    "POLARIZATION" => "R",
     "amplitude" => 0.02,
     "anglek" => [0.0, 0.0],
     "Nx" => 6,
@@ -78,7 +79,7 @@ transmission_func = (result, params) -> begin
     coefs = AtomicArrays.field.transmission_reflection(field, coll, sigmas_m;
                                                  beam=:gauss,
                                                  surface=:hemisphere,
-                                                 polarization=[1,1im,0]/sqrt(2),
+                                                #  polarization=[1,1im,0]/sqrt(2),
                                                  samples=400,
                                                  zlim=zlim,
                                                  size=[5.0,5.0])
@@ -102,7 +103,7 @@ mirror_identify_func = (result, params) -> begin
                                                    TR.R_sigma_plus,
                                                    TR.R_sigma_minus,
                                                    thresh_T=0.1,
-                                                   kind=:sigmoid,
+                                                   kind=:product,
                                                    )
     metrics.obj
 end
@@ -113,13 +114,13 @@ fig = plot_sweep_quantity(results, transmission_func, "deltas";
     fixed_params=merge(fixed_params_mult, Dict("POLARIZATION" => "R")),
     ylabel="Transmission")
 
-plot_sweep_multicurve(results_trunc,
+plot_sweep_multicurve(results,
                                 transmission_func,
                                 # mirror_identify_func,
-                                # "deltas",
-                                "a",
+                                "deltas",
+                                # "a",
                                 "POLARIZATION";
-                                fixed_params=fixed_params_mult_2,
+                                fixed_params=fixed_params_mult,
                                 ylabel="Reflection")
 
 plot_sweep_multicurve(results_trunc,
@@ -136,29 +137,49 @@ fig, x, y, z = plot_sweep_heatmap(results_trunc,
                    "deltas",
                    "a";
                    fixed_params=fixed_params_heat,
-                #    data=(x,y,z),
+                   data=(x,y,z),
                    figure_kw=(size=1.5.*(600,450),),
                    axis_kw=(aspect = AxisAspect(1),
                             limits=(pars.deltas[1], pars.deltas[end],
-                                    pars.a[1],pars.a[end])),
+                                    pars.a[1],pars.a[end]),
+                            xlabel=L"\Delta",
+                            title="Objective: a vs Δ, σ⁻",
+                            xlabelsize=20,
+                            ylabelsize=20,
+                            xticklabelsize = 18,
+                            yticklabelsize = 18,
+                            titlesize=24,
+                                    ),
                    heatmap_kw=(colormap=:plasma,
                                colorrange=(0,1)),
-                   colorbar_kw=(label="Transmission",))
+                   colorbar_kw=(label="Objective and chirality",))
 fig
+# save(PATH_FIGS*"pres_mirror_identify.pdf", fig, px_per_unit=4)
 
+# Plots for presentation
+let
+    fig_p1 = plot_sweep_multicurve(results,
+                                    transmission_func,
+                                    # mirror_identify_func,
+                                    "deltas",
+                                    # "a",
+                                    "POLARIZATION";
+                                    fixed_params=fixed_params_mult,
+                                    ylabel="Transmission")
+    ax = fig_p1.content[1]
+    ax.xlabel = L"(\omega - \omega_0) / \omega_0"
+    ax.ylabel = "Reflection"
+    ax.title = L"B_z = 0.2"
 
+    ax.xlabelsize = 18
+    ax.ylabelsize = 18
+    ax.titlesize  = 20
+    ax.xticklabelsize = 14
+    ax.yticklabelsize = 14
+    # save(PATH_FIGS*"pres_reflection.pdf", fig_p1, px_per_unit=4)
+    fig_p1
+end
 
-filter_results(results, Dict(
-    "a" => pars.a[24],
-    "deltas" => pars.deltas[1],
-    "Bz" => 0.2,
-    "POLARIZATION" => "L",
-    "amplitude" => 0.02,
-    "anglek" => [0.0, 0.0],
-    "Nx" => 6,
-    "Ny" => 6,
-))
-results
 
 
 @btime NonlocalArrays.transmission_reflection_new(E_in, coll, sigmas_m; beam=:gauss, samples=400, zlim=20.0, return_helicity=true, return_powers=true)
@@ -171,6 +192,8 @@ size=[5.0,5.0])
 test = stokes(1.0+im, 1.0-im)
 test.I
 test000 = NonlocalArrays.chiral_mirror_metrics(test00[1], test00[2], test00[3], test00[4], test00[5])
+
+NonlocalArrays.Scattering.helicity_basis(-normalize(E_in.k_vector))
 
 begin
     # Options: "xy", "xz", "yz"
@@ -285,6 +308,8 @@ begin
     end
 end
 
+plot_atoms_with_field(coll, E_in)
+
 AtomicArrays.field.transmission_reflection(E_in, coll, sigmas_m;
                                                  beam=:gauss,
                                                  surface=:hemisphere,
@@ -293,12 +318,31 @@ AtomicArrays.field.transmission_reflection(E_in, coll, sigmas_m;
                                                  zlim=50,
                                                  size=[5.0,5.0])
 
-test = field.total_field(field_func, [0.0,0.0,5.0], E_in, coll, sigmas_m)
-test = field.scattered_field([1.0,1.0,-5.0], coll, sigmas_m)
-stokes(test[1], test[2])
+transmission_reflection_new(E_in, coll, sigmas_m;
+                                                 beam=:gauss,
+                                                 surface=:plane,
+                                                 samples=40,
+                                                 zlim=5,
+                                                 size=(5.0,5.0),
+                                                 return_helicity=true,
+                                                 return_powers=false)
 
-test_0 = helicity_flux_fibonacci(field_func, E_in, coll, sigmas_m;
-                                 R=5.0, Ndirs=400)
+
+f_test = (E, k) -> dot(normalize(imag(cross(conj(E), E))), normalize(k))
+test = field.total_field(field_func, [0.0,0.0,-5.0], E_in, coll, sigmas_m)
+test = field.scattered_field([0.0,0.0,-5.0], coll, sigmas_m)
+test_00 = field_func([0.0,0.0,5.0], E_in)
+stokes(test[1], test[2])
+stokes(test)
+
+f_test(test, [0.0,0.0,-5.0])
+f_test(test_00, [0.0,0.0,5.0])
+E_in.polarisation
+test
+
+NonlocalArrays.Scattering.reflection_phases(field_func, E_in, coll, sigmas_m; R=5.0)
+
+
 
 # Plots
 # fields
@@ -373,5 +417,75 @@ let
              width = 15, height = Relative(1))
 
     # save(PATH_FIGS*"4level_I_t_a"*string(a)*"_"*POLARIZATION*"_theta"*string(round(field.angle_k[1], digits=2))*"_N"*string(N)*".pdf", fig, px_per_unit=4)
+    fig
+end
+
+
+# Dispersion curves
+begin
+    # Dipole vectors for σ⁻, π, σ⁺  (example: quantization along ẑ)
+    μs = [AtomicArrays.fourlevel_misc.polarizations_spherical()[i,:] for i = 1:3]
+
+    γs = AtomicArrays.fourlevel_misc.gammas(0.25)            # set identical linewidths
+    B_z = 0.0
+    Δs = [B_z*m for m = -1:1]            # Zeeman splittings
+    a  = 0.25                       # lattice constant in λ units
+
+    kvals = range(-π/a, π/a; length=300)
+    bands = [eigvals(omega_1d_triplet(k, a, μs, γs, Δs))
+            for k in kvals]        # three dispersion branches
+
+            # Convert to array of shape (3, Nk) for plotting
+    ωmat = reduce(hcat, bands)                  # each column is k-point
+end
+
+let
+    f  = Figure(size = (800, 500))
+    ax = Axis(f[1, 1],
+              xlabel = "k·a / π",
+              ylabel = "ω / Γ",
+              xlabelsize=20,
+              ylabelsize=20,
+              xticklabelsize = 18,
+              yticklabelsize = 18,
+              titlesize=24,
+              xticks = -1:0.5:1,
+              title=L"B_z = 0.2",
+            #   yticks = nothing
+              )  # or `yticks = nothing` also works
+
+    # plot each band
+    colors = [:dodgerblue, :crimson, :seagreen]
+    for b in 1:3
+        lines!(ax, collect(kvals .* a / π), ωmat[b,:], linewidth = 2, color = colors[b], label = "band $b")
+    end
+
+    axislegend(ax; position = :rb, labelsize = 18)
+    # save(PATH_FIGS*"pres_dispersion_a"*string(a)*"_Bz"*string(round(B_z, digits=2))*".pdf", f, px_per_unit=4)
+    f
+end
+
+ωbands, s = bands_GXMG(a, μs, γs, Δs; Nk = 250, keep_k = true, Nmax=100)
+
+let
+    fig = Figure(size = (800, 450))
+    ax  = Axis(fig[1, 1];
+            xlabel = "Γ   X   M   Γ",
+            ylabel = "ω / Γ",
+            xticklabelrotation = 0,
+            xlabelsize = 15,
+            ylabelsize = 14,
+            xticks=([0.0, maximum(s)/3, 2*maximum(s)/3, s[end]], ["Γ", "X", "M", "Γ"]),
+            #    yticks = :none
+            )
+
+    colors = [:dodgerblue, :crimson, :seagreen]
+    for b in 1:3
+        lines!(ax, s, ωbands[b, :], color = colors[b], linewidth = 2)
+    end
+
+    # vertical guide lines at X and M
+    vlines!(ax, [maximum(s)/3, 2*maximum(s)/3], color = :gray, linestyle = :dash)
+    # save(PATH_FIGS*"pres_bands_GXMG_B_0.0.pdf", fig)
     fig
 end
