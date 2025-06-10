@@ -582,9 +582,9 @@ end
 
 # Compute bands using quasimomentum
 fixed_params_bands = Dict(
-    "a" => 0.1,
+    "a" => 0.2,
     "deltas" => 0.0,
-    "Bz" => 0.0,
+    "Bz" => 0.2,
     "amplitude" => 0.0,
     "anglek" => [0.0,0.0],
     "Nx" => 10,
@@ -625,108 +625,14 @@ begin
                   for i=1:N_tot, j=1:N_tot, m=1:3, mp=1:3)
 end
 
-Gf = AtomicArrays.interaction.GreenTensor(-(coll_bands.atoms[15].position - coll_bands.atoms[4].position), 2*pi)
-- coll_bands.polarizations[1,:,4]' * real(Gf) * coll_bands.polarizations[3,:,15] / 16
-coll_bands.polarizations[1,:,4]' * imag(Gf) * coll_bands.polarizations[3,:,15] / 8
-OmegaTensor[4,15,1,3]
-GammaTensor[4,15,1,3]
-maximum(imag(OmegaTensor))
-var = AtomicArrays.reducedsigmaplus(b_reduced, 1, -1)*
-                 AtomicArrays.reducedsigmaminus(b_reduced, 1, 1)
-dense(var).data
 
-Rt, Ωtab = NonlocalArrays.GeomField.precompute_Omega_table(a, μs, γs; Nmax=60)
-Rt, Γtab = NonlocalArrays.GeomField.precompute_Gamma_table(a, μs, γs; Nmax=60)
-
-NonlocalArrays.GeomField.omega_2d_triplet_fast(0.0, 0.0, Rt, Ωtab, Δs)
-W_test = NonlocalArrays.GeomField.gamma_2d_triplet_fast(2.5, 1.0, Rt, Ωtab, γs)
-sort!(eigvals(W_test), by=real)
-
-eigvals(Matrix(NonlocalArrays.GeomField.omega_gamma_2d_triplet_fast(2.1,2.1,
-                            Rt , Ωtab , Γtab ,
-                            Δs,
-                            γs)))
-Γtab
-GammaTensor[1,4,1,1]
-# --------------------------------------------------------------------
-# 1.   Build 3×3 Bloch block from H_eff and known positions
-# --------------------------------------------------------------------
-@inline function bloch_3x3(H_eff::AbstractMatrix,
-                           r::Vector{SVector{2,Float64}},
-                           kx::Real, ky::Real)
-    N = length(r)
-    W = zeros(ComplexF64, 3, 3)
-
-    @inbounds for j in 1:N, l in 1:N
-        phase = exp(-im*(kx*(r[j][1]-r[l][1]) +
-                         ky*(r[j][2]-r[l][2])))
-        baseJ = 3*(j-1);  baseL = 3*(l-1)
-
-        for m in 1:3, mp in 1:3
-            W[m, mp] += H_eff[baseJ+m, baseL+mp] * phase
-        end
-    end
-    return W / N
-end
-
-# --------------------------------------------------------------------
-# 2.   Bands along Γ–X–M–Γ using *provided* positions
-# --------------------------------------------------------------------
-function bands_GXMG_from_H(H_eff::AbstractMatrix,
-                           r::Vector{SVector{2,Float64}},
-                           a::Real;                     # lattice period (for k-path)
-                           Nk::Int=200,
-                           threads::Bool=true)
-
-    Γ = (0.0, 0.0);      X = (π/a, 0.0);      M = (π/a, π/a)
-    knodes = (Γ, X, M, Γ)
-
-    segment(k1, k2) = let
-        (kx1, ky1), (kx2, ky2) = k1, k2
-        t = range(0.0, 1.0, Nk+1)[1:end-1]
-        collect(zip(kx1 .+ t.*(kx2-kx1), ky1 .+ t.*(ky2-ky1)))
-    end
-
-    kpath = vcat([segment(knodes[i], knodes[i+1]) for i in 1:3]...)
-    npts  = length(kpath)
-
-    ωmat = Matrix{Float64}(undef, 3, npts)
-    s    = Vector{Float64}(undef, npts)
-
-    if threads && Threads.nthreads()>1
-        Threads.@threads for idx in 1:npts
-            kx, ky = kpath[idx]
-            Wk = bloch_3x3(H_eff, r, kx, ky)
-            ωmat[:, idx] .= sort(real(eigvals(Wk)))
-        end
-    else
-        for idx in 1:npts
-            kx, ky = kpath[idx]
-            Wk = bloch_3x3(H_eff, r, kx, ky)
-            ωmat[:, idx] = sort(real(eigvals(Wk)))
-        end
-    end
-
-    s[1] = 0.0
-    for i in 2:npts
-        s[i] = s[i-1] + hypot(kpath[i][1]-kpath[i-1][1],
-                              kpath[i][2]-kpath[i-1][2])
-    end
-
-    return ωmat, s
-end
-
-# --------------------------------------------------------------------
-# 3.   Usage with your existing objects
-# --------------------------------------------------------------------
-# • H_eff  – already built in your block
-# • coll_bands – already built; provides the atomic coordinates
 
 # Extract (x,y) coordinates once
 r_xy = [ SVector(coll_bands.atoms[i].position[1:2]...) for i in eachindex(coll_bands.atoms) ]
 # Compute bands
 bands, decay, kdist = NonlocalArrays.GeomField.bands_GXMG_from_H(dense(H_eff).data, r_xy, fixed_params_bands["a"];
-                                 Nk = 250, threads = true, keep_k=true)
+                                 Nk = 250, threads = true, keep_k=true, 
+                                 return_gamma = true)
 bands, kdist = bands_GXMG_from_H(dense(H_eff).data, r_xy, fixed_params_bands["a"];
                                  Nk = 250, threads = true)
 
