@@ -477,6 +477,7 @@ end
 let
     fig = Figure(size = (800, 450))
 
+    Nk = length(s) ÷ 3
     colors = [:dodgerblue, :crimson, :seagreen]
     for i = 1:2
         ax  = Axis(fig[i, 1];
@@ -485,7 +486,7 @@ let
                 xticklabelrotation = 0,
                 xlabelsize = 15,
                 ylabelsize = 14,
-                xticks=([0.0, maximum(s)/3, 2*maximum(s)/3, s[end]], ["Γ", "X", "M", "Γ"]),
+                xticks=(s[[1, Nk+1, 2*Nk+1, end]], ["M", "Γ", "X", "M"]),
                 #    yticks = :none
                 )
         for b = 1:3
@@ -494,7 +495,7 @@ let
                    color = colors[b], linewidth = 2)
         end
     # vertical guide lines at X and M
-    vlines!(ax, [maximum(s)/3, 2*maximum(s)/3], color = :gray, linestyle = :dash)
+    vlines!(ax, s[[1, Nk+1, 2*Nk+1, end]], color = :gray, linestyle = :dash)
     end
 
     # save(PATH_FIGS*"pres_bands_GXMG_B_0.0.pdf", fig)
@@ -639,13 +640,15 @@ bands, kdist = bands_GXMG_from_H(dense(H_eff).data, r_xy, fixed_params_bands["a"
 # Optional quick plot
 let
     fig = Figure(size = (800, 450))
+
+    Nk = length(kdist) ÷ 3
     ax  = Axis(fig[1, 1];
             xlabel = "Γ   X   M   Γ",
             ylabel = "ω / Γ",
             xticklabelrotation = 0,
             xlabelsize = 15,
             ylabelsize = 14,
-            xticks=([0.0, maximum(kdist)/3, 2*maximum(kdist)/3, kdist[end]], ["Γ", "X", "M", "Γ"]),
+            xticks=(kdist[[1, Nk+1, 2*Nk+1, end]], ["Γ", "X", "M", "Γ"]),
             #    yticks = :none
             )
 
@@ -655,7 +658,7 @@ let
     end
 
     # vertical guide lines at X and M
-    vlines!(ax, [maximum(kdist)/3, 2*maximum(kdist)/3], color = :gray, linestyle = :dash)
+    vlines!(ax, kdist[[1, Nk+1, 2*Nk+1, end]], color = :gray, linestyle = :dash)
     # save(PATH_FIGS*"pres_bands_GXMG_B_0.0.pdf", fig)
     fig
 end
