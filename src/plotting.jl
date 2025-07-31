@@ -205,14 +205,16 @@ Draw maps of **Re/|E|** and **Intensity** on the chosen plane
 
 * `p`      – parameter Dict (contains `Nx`, `Ny`, `a`, …)
 * `result` – steady-state ProductState
-* `ax_E`   – 3×2 `Axis` grid (Re/Abs of Ex,Ey,Ez)
-* `ax_I`   – single `Axis` for total intensity
+* `plane`  - `"xy"`, `"xz"`, `"yz"` 
+* `plane_pos` - (1.0, 0.5, 0.5) for `"xy"`, `"xz"`, `"yz"`, all multiplied by a
 """
 function field_intensity_map(; p::Dict, 
                                result,
                                plane::String="xz",
                                inc_field_profile::Function,
                                npoints=100, scale=3.5,
+                               plane_pos::Tuple=(1.0, 0.5, 0.5),
+                               plot::Bool = true,
                                data::Union{Nothing, NamedTuple}=nothing)
     # build system -----------------------------------------------------
     coll, Ein, field_func, _ = build_fourlevel_system(
@@ -229,22 +231,24 @@ function field_intensity_map(; p::Dict,
 
         # choose varying / fixed coordinates ------------------------------
         fixed_val, set_r!, atom_coords, label1, label2 = plane == "xy" ? (
-            Nx*a/2+0.2,
+            plane_pos[1]*a,
             (r,x,y)->(r[1]=x; r[2]=y; r[3]=fixed_val), 
             ([atom.position[1] for atom in coll.atoms],
              [atom.position[2] for atom in coll.atoms]), "x","y") :
-        plane == "xz" ? ((isodd(Nx) ? a/2 : 0.0),
+        plane == "xz" ? ((isodd(Nx) ? plane_pos[2]*a : 0.0),
             (r,x,z)->(r[1]=x; r[2]=fixed_val; r[3]=z), 
             ([atom.position[1] for atom in coll.atoms],
              [atom.position[3] for atom in coll.atoms]),"x","z") :
-        plane == "yz" ? (Nx*a/2+0.2,
+        plane == "yz" ? ((isodd(Ny) ? plane_pos[3]*a : 0.0),
             (r,y,z)->(r[1]=fixed_val; r[2]=y; r[3]=z),
             ([atom.position[2] for atom in coll.atoms],
              [atom.position[3] for atom in coll.atoms]), "y","z") :
         error("plane must be xy, xz or yz")
 
         nx = ny = npoints
-        ReE, AbsE = [zeros(nx,ny) for _ in 1:3], [zeros(nx,ny) for _ in 1:3]
+        ReE = [zeros(nx,ny) for _ in 1:3]
+        ImE = [zeros(nx,ny) for _ in 1:3]
+        AbsE = [zeros(nx,ny) for _ in 1:3]
         Igrid     = zeros(nx,ny)
         Igrid_sc  = zeros(nx,ny)
 
@@ -263,6 +267,9 @@ function field_intensity_map(; p::Dict,
                 ReE[1][i,j] = real(Esc[1]); AbsE[1][i,j] = abs(Esc[1])
                 ReE[2][i,j] = real(Esc[2]); AbsE[2][i,j] = abs(Esc[2])
                 ReE[3][i,j] = real(Esc[3]); AbsE[3][i,j] = abs(Esc[3])
+                ImE[1][i,j] = imag(Esc[1])
+                ImE[2][i,j] = imag(Esc[2])
+                ImE[3][i,j] = imag(Esc[3])
                 Igrid[i,j]  = I_tot
                 Igrid_sc[i,j]  = I_sc
             end
@@ -270,37 +277,43 @@ function field_intensity_map(; p::Dict,
     else
         coord = data.x
         ReE = data.reE
+        ImE = data.imE
         AbsE = data.absE
         Igrid = data.I_tot
         Igrid_sc = data.I_sc
     end
 
     # ---- plotting ----------------------------------------------------
-    fig    = Figure(size = (900,1100))
-    ax_E = [Axis(fig[i,j]; aspect=DataAspect()) for i in 1:3, j in 1:2]
-    ax_I   = [Axis(fig[4,j]; aspect=DataAspect()) for j in 1:2]
-    comps = ("E_x","E_y","E_z")
-    for k in 1:3
-        cf_re = contourf!(ax_E[k,1], coord, coord, ReE[k], colormap=:plasma,
-                  levels=10);  ax_E[k,1].title = "Re("*comps[k]*")"
-        scatter!(ax_E[k,1], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
-        Colorbar(fig[k, 3], cf_re, width = 15, height = Relative(1))
-        cf_abs= contourf!(ax_E[k,2], coord, coord, AbsE[k], colormap=:plasma,
-                  levels=10);  ax_E[k,2].title = "Abs("*comps[k]*")"
-        scatter!(ax_E[k,2], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
-        Colorbar(fig[k, 4], cf_abs, width = 15, height = Relative(1))
+    if plot
+        fig    = Figure(size = (900,1100))
+        ax_E = [Axis(fig[i,j]; aspect=DataAspect()) for i in 1:3, j in 1:2]
+        ax_I   = [Axis(fig[4,j]; aspect=DataAspect()) for j in 1:2]
+        comps = ("E_x","E_y","E_z")
+        for k in 1:3
+            cf_re = contourf!(ax_E[k,1], coord, coord, ReE[k], colormap=:plasma,
+                    levels=10);  ax_E[k,1].title = "Re("*comps[k]*")"
+            scatter!(ax_E[k,1], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
+            Colorbar(fig[k, 3], cf_re, width = 15, height = Relative(1))
+            cf_abs= contourf!(ax_E[k,2], coord, coord, AbsE[k], colormap=:plasma,
+                    levels=10);  ax_E[k,2].title = "Abs("*comps[k]*")"
+            scatter!(ax_E[k,2], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
+            Colorbar(fig[k, 4], cf_abs, width = 15, height = Relative(1))
+        end
+        for j in 1:2
+            I = (j == 1) ? Igrid : Igrid_sc
+            cf_in = contourf!(ax_I[j], coord, coord, I, 
+                            colormap=:plasma, levels=40)
+            scatter!(ax_I[j], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
+            Colorbar(fig[4, j+2], cf_in, width = 15, height = Relative(1))
+            ax_I[j].title = (j==1) ? "Intensity" : "Intensity, scatt"
+            ax_I[j].xlabel, ax_I[j].ylabel = label1, label2
+        end
+        return (fig, ax_E, ax_I, (x=coord, y=coord, reE=ReE, absE=AbsE, 
+                                I_tot=Igrid, I_sc=Igrid_sc, imE=ImE))
+    else
+        return (x=coord, y=coord, reE=ReE, absE=AbsE, 
+                I_tot=Igrid, I_sc=Igrid_sc, imE=ImE)
     end
-    for j in 1:2
-        I = (j == 1) ? Igrid : Igrid_sc
-        cf_in = contourf!(ax_I[j], coord, coord, I, 
-                          colormap=:plasma, levels=40)
-        scatter!(ax_I[j], atom_coords[1], atom_coords[2], markersize = 8, color = :white)
-        Colorbar(fig[4, j+2], cf_in, width = 15, height = Relative(1))
-        ax_I[j].title = "Intensity"
-        ax_I[j].xlabel, ax_I[j].ylabel = label1, label2
-    end
-    return fig, ax_E, ax_I, (x=coord, y=coord, reE=ReE, absE=AbsE, 
-                               I_tot=Igrid, I_sc=Igrid_sc)
 end
 
 

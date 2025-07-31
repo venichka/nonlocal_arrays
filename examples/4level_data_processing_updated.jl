@@ -7,6 +7,7 @@ end
 # ── dependencies ------------------------------------------------------
 using CairoMakie, GLMakie, LinearAlgebra, FFTW
 using QuantumOptics, AtomicArrays, NonlocalArrays, BenchmarkTools
+using ProgressMeter
 using StaticArrays
 
 # ── 1. CONFIGURATION ──────────────────────────────────────────────────
@@ -28,8 +29,8 @@ Base.@kwdef mutable struct Config
     # --- sweep sub-selection ------------------------------------------
     fixed::Dict{String,Any} = Dict(
         "a"           => 0.3181818181818182,           # lattice const
-        "deltas"      => 0.20,
-        "Bz"          => 0.20,           # Zeeman field
+        "deltas"      => 0.16363636363636364,#0.12727272727272726,#0.05454545454545454,
+        "Bz"          => 0.2,           # Zeeman field
         "amplitude"   => 0.02,           # drive
         "anglek"      => [0.0, 0.0],     # incidence
         "Nx"          => 8,
@@ -104,95 +105,105 @@ end
 transmission(result, p) = _tr_coeff(result, p; reflection=false)
 reflection(result, p) = _tr_coeff(result, p; reflection=true)
 
-mirror_metric(result, p) = let
-    coll, field, _ = NonlocalArrays.build_fourlevel_system(
-                         merge(p, Dict("field_func"=>cfg.field_profile)))
-    σ = AtomicArrays.fourlevel_meanfield.sigma_matrices([result],1)[1]
-    TR = NonlocalArrays.transmission_reflection_new(field, coll, σ;
-            beam=:gauss, surface=:plane, samples=40, zlim=cfg.zlim,
-            size=(2,2), return_helicity=true, return_powers=false)
-    NonlocalArrays.chiral_mirror_metrics(
-        TR.T_sigma_plus, TR.T_sigma_minus,
-        TR.R_sigma_plus, TR.R_sigma_minus).obj
-end
-
 """
-    plot_sweep_multicurve(results, quantity, xparam, curve_param;
-                          fixed_params = nothing, ylabel = "")
+    chiral_plane_map(results; vary   = ["deltas","a"],
+                               fixed  :: Dict,
+                               pars   :: NamedTuple,
+                               profile = AtomicArrays.field.gauss,
+                               surface = :plane,
+                               zlim    = 50.0,
+                               samples = 400)   -> (HP, CD, χ, xs, ys)
 
-Plot `quantity(result, params)` versus `xparam`, drawing one curve
-for every distinct value of `curve_param`.
+Compute helicity–preserving (HP), circular-dichroism (CDᵣ) and their
+product X = HP⋅CDᵣ on a rectangular grid of 1–3 varying parameters.
 
-If `fixed_params` is
+`vary` is an ordered vector of parameter names (`String`s) you want to
+scan (∈ `pars`), e.g. `["deltas"]`, `["deltas","a"]`, or
+`["deltas","a","Bz"]`.
 
-* a `Dict`  → only entries matching that dictionary are used;
-* `nothing` → the function detects parameters that are *constant* across
-  the whole sweep (excluding `xparam` and `curve_param`) and uses those
-  as the implicit fixed slice.
+`fixed` **must** include every other parameter present in `results`
+(typical slice dictionary).  The function returns
+HP, CD, χ, axes...
+
+* `HP`, `CD`, `χ` – `Float64` arrays with one dimension per entry in
+  `vary` (lengths inherited from `pars` fields).
+* `axes` – the vectors that label each axis (`xs`, `ys`, `zs`).
+
+A threaded sweep is used; progress is shown with `ProgressMeter`.
 """
-function plot_sweep_multicurve_new(
-        results      :: AbstractDict,
-        quantity     :: Function,
-        xparam       :: AbstractString,
-        curve_param  :: AbstractString;
-        fixed_params :: Dict{String,Any},
-        ylabel       :: AbstractString = "")
+function chiral_plane_map(results :: AbstractDict;
+                          vary    :: Vector{String},
+                          fixed   :: Dict{String,Any},
+                          pars    :: NamedTuple,
+                          profile          = AtomicArrays.field.gauss,
+                          surface::Symbol  = :plane,
+                          zlim::Real       = 50.0,
+                          samples::Integer = 400)
 
-    # ── 0. validate input & build constant slice once ──────────────────
-    isempty(fixed_params) && error("`fixed_params` must not be empty.")
+    nv = length(vary)
 
-    # keep a *copy* so we don't mutate the caller's dictionary
-    const_slice = Dict(kv for kv in fixed_params     # drop xparam/curve_param
-                       if first(kv) ∉ (xparam, curve_param))
+    # build axis vectors -------------------------------------------------
+    axes = map(vary) do p
+        if p == "Bz"
+            p = "bz"
+        elseif p == "Nx"
+            p = "nx"
+        elseif p == "Nx"
+            p = "ny"
+        end
+        getfield(pars, Symbol(p)) |> collect   # ensure vector
+    end
 
-    fixed_keys  = collect(keys(const_slice))         # faster inside loop
+    dims = map(length, axes)
+    HP  = fill(NaN, dims...)
+    CD  = similar(HP)
+    X   = similar(HP)
 
-    # ── 1. bucket by `curve_param` ─────────────────────────────────────
-    curves = Dict{Any, Vector{Tuple{Float64,Float64}}}()
+    # fixed slice (remove possibly present vary keys):
+    const_slice = Dict(kv for kv in fixed if first(kv) ∉ vary)
 
-    # for (p, r) in results
-    pairs_vec = collect(results)
-    for i in eachindex(pairs_vec)
-        p, r = pairs_vec[i]              # destructure the Pair
-        # fast path: reject as soon as one key mismatches
-        @inbounds begin
-            ok = true
-            for k in fixed_keys
-                if get(p, k, nothing) != const_slice[k]
-                    ok = false
-                    break
-                end
-            end
-            ok || continue
+    # progress bar -------------------------------------------------------
+    tot = prod(dims)
+    prog = Progress(tot; desc = "chiral-map")
+
+    Threads.@threads for idx in CartesianIndices(HP)
+        # thread-local parameter dict -----------------------------------
+        p = copy(const_slice)
+        for (i, key) in enumerate(vary)
+            p[key] = axes[i][idx[i]]
         end
 
-        x = Float64(p[xparam])
-        c = p[curve_param]
+        # look up two polarisations ------------------------------------
+        pR   = merge(p, Dict("POLARIZATION"=>"R"))
+        pL   = merge(p, Dict("POLARIZATION"=>"L"))
+        rR   = get(results, pR, nothing)
+        rL   = get(results, pL, nothing)
+        (rR===nothing || rL===nothing) && (next!(prog); continue)
 
-        # quantity can use the *original* parameter dict `p`
-        y = quantity(r, p)
+        # build systems only once per polarisation ---------------------
+        build_sys = (pr, res)->begin
+            coll, field, _ = NonlocalArrays.build_fourlevel_system(
+                                 merge(pr, Dict("field_func"=>profile)))
+            σ = AtomicArrays.fourlevel_meanfield.sigma_matrices([res],1)[1]
+            NonlocalArrays.transmission_reflection_new(field, coll, σ;
+                beam=:gauss, surface=surface,
+                samples=samples, zlim=zlim, size=(2,2),
+                return_helicity=true, return_powers=false)
+        end
+        TR_R = build_sys(pR, rR)
+        TR_L = build_sys(pL, rL)
 
-        push!(get!(curves, c, Vector{Tuple{Float64,Float64}}()), (x, y))
+        metr = NonlocalArrays.chiral_mirror_metrics_new(
+                [TR_R.R_sigma_minus TR_R.R_sigma_plus;
+                 TR_L.R_sigma_minus TR_L.R_sigma_plus])
+
+        HP[idx] = metr.HP
+        CD[idx] = metr.CD_R
+        X[idx]  = HP[idx] * CD[idx]
+
+        next!(prog)
     end
-
-    isempty(curves) && error("No data matched the supplied fixed_params.")
-
-    # ── 2. plot ────────────────────────────────────────────────────────
-    fig = Figure()
-    ax  = Axis(fig[1, 1];
-               xlabel = xparam,
-               ylabel = ylabel,
-               title  = "$xparam vs $curve_param")
-
-    for (c, pairs) in sort!(collect(curves); by = first)
-        xs = first.(pairs)
-        ys = last.(pairs)
-        ord = sortperm(xs)
-        lines!(ax, xs[ord], ys[ord]; label = "$curve_param = $c")
-    end
-
-    axislegend(ax)
-    return ax, fig
+    return HP, CD, X, axes...
 end
 
 
@@ -208,6 +219,38 @@ sel = filter_by_fixed(results; fixed=sliced_dict)
 @info "Found $(length(sel)) states for the chosen slice."
 end
 
+
+# chiral mirror metrics
+HP, CD, chi, xs, ys = chiral_plane_map(
+        results;
+        vary  = ["deltas", "a"],     # one or two or three parameters
+        fixed = Dict(k=>v for (k,v) in cfg.fixed if k ≠ "POLARIZATION"),
+        pars  = pars,               # the NamedTuple from params_to_vars!
+        surface=:plane,
+        samples=20,
+        zlim  = cfg.zlim)
+
+let 
+fig = Figure()
+default_title = "Heatmap: $(cfg.vary_x) vs $(cfg.vary_y)"
+axis_kw = (; xlabel=cfg.vary_x, ylabel=cfg.vary_y, title=default_title)
+
+ax = Axis(fig[1,1]; axis_kw...)
+
+hmap = heatmap!(ax, xs, ys, chi; colormap=:plasma)
+vlines!(cfg.fixed["deltas"]; linestyle=:dash, color=:black)
+Colorbar(fig[1,2], hmap; )
+fig
+end
+
+let
+fig_HP = Figure()
+ax_HP = Axis(fig_HP[1, 1], xlabel = cfg.vary_x, ylabel = "HP", title = "Sweep: $(cfg.vary_x)")
+lines!(ax_HP, xs, chi)
+fig_HP
+end
+
+
 begin
 # --- 1-D curves -------------------------------------------------------
 x, y  = plot_sweep_quantity(sel, transmission, cfg.vary_x;
@@ -217,12 +260,13 @@ end
 
 @timed begin
 # --- multi-curve example (polarisation) ------------------------------
-par1 = cfg.vary_x
+par1 = cfg.vary_y
 par2 = "POLARIZATION"
 sliced_dict_mult = Dict(kv for kv in cfg.fixed
                    if first(kv) ∉ (par1, par2))
 ax_T, fig_T = plot_sweep_multicurve(results, reflection, par1, par2;
                                     fixed_params=sliced_dict_mult)
+fig_T
 end
 
 begin
@@ -232,7 +276,7 @@ yv = sort(unique(p[cfg.vary_y] for p in keys(sel)))
 Z = [ let p = merge(cfg.fixed,
                     Dict(cfg.vary_x => a,
                          cfg.vary_y => b))
-          haskey(sel, p) ? mirror_metric(sel[p], p) : NaN
+          haskey(sel, p) ? reflection(sel[p], p) : NaN
      end
      for b in yv, a in xv ]   # <-- (row, column) order
 
@@ -260,22 +304,83 @@ for b in 1:3
 end
 vlines!(axω, s[[1,cfg.Nk_path+1,2cfg.Nk_path+1,end]]; color=:grey, linestyle=:dash)
 vlines!(axγ, s[[1,cfg.Nk_path+1,2cfg.Nk_path+1,end]]; color=:grey, linestyle=:dash)
+fig_B
 end
 
 begin
 # Field plots: Re, Abs, Intensity
 # choose a slice & state ------------------------------------------------
-plane = "xz"
-p_fixed = merge(cfg.fixed, Dict("POLARIZATION" => "R",
-                                "deltas"       => pars.deltas[11]))
+plane = "xy"
+p_fixed = merge(cfg.fixed, Dict( # put here any params you want to modify
+                                "POLARIZATION" => "R",
+                                # "deltas"       => pars.deltas[11]
+                                ))
 result, _ = find_state(results, p_fixed)
 
-fig_F = NonlocalArrays.field_intensity_map(; p=p_fixed, result=result,
-                                             inc_field_profile=cfg.field_profile)[1]
+fig_F, _, _, data = NonlocalArrays.field_intensity_map(; p=p_fixed, 
+                                             result=result,
+                                             plane=plane,
+                                             plane_pos=(-3.4, 0.5, 0.5),
+                                             scale=1.0,
+                                             inc_field_profile=cfg.field_profile,
+                                             plot=true)
 
 fig_F
 end
 
+# field polarization study
+begin
+E_data = data.reE .+ 1im*data.imE
+stokes_params = NonlocalArrays.stokes.(E_data[1], E_data[2])
+v_obj = zeros(size(stokes_params)...)
+u_obj = zeros(size(stokes_params)...)
+q_obj = zeros(size(stokes_params)...)
+field_obj = Array{Vector}(undef, size(stokes_params)...)
+for i in eachindex(stokes_params[:, 1]), j in eachindex(stokes_params[1,:])
+    # println((stokes_params[i,j].I, stokes_params[i,j].V)./stokes_params[i,j].I)
+    v_obj[i,j] = stokes_params[i,j].V/stokes_params[i,j].I
+    u_obj[i,j] = stokes_params[i,j].U/stokes_params[i,j].I
+    q_obj[i,j] = stokes_params[i,j].Q/stokes_params[i,j].I
+    field_obj[i,j] = [E_data[1][i,j], E_data[2][i,j], E_data[3][i,j]]
+end
+end
+
+let 
+    objs = [q_obj, u_obj, v_obj]
+    fig = Figure(;size=(900,900)) 
+    for i in eachindex(objs)
+        Axis(fig[i,1]; aspect=DataAspect(),xlabel=string(plane[1]),
+                                           ylabel=string(plane[2]))
+        hmap = heatmap!(data.x, data.y, objs[i];
+                        colormap=:seismic, colorrange=(-1,1))
+        Colorbar(fig[i,2], hmap; )
+    end
+    Axis(fig[2,3]; aspect=DataAspect(),xlabel=string(plane[1]),
+                                       ylabel=string(plane[2]))
+    hmap = heatmap!(data.x, data.y, data.I_sc;
+                    colormap=:gist_heat, colorrange=(0,0.25))
+    Colorbar(fig[2,4], hmap; )
+    fig
+end
+
+# arrow plot
+let
+    fig = Figure(size = (800, 800))
+    ax = Axis(fig[1, 1], backgroundcolor = "black")
+    # xs = data.x
+    # ys = data.y
+    range_i = 1:2:100
+    xs = [data.x[i] for i in range_i]
+    ys = [data.y[i] for i in range_i]
+    # explicit method
+    # us = [real(field_obj[i,j][1]) for i in eachindex(xs), j in eachindex(ys)]
+    # vs = [real(field_obj[i,j][2]) for i in eachindex(xs), j in eachindex(ys)]
+    us = [real(field_obj[i,j][1]) for i in range_i, j in range_i]
+    vs = [real(field_obj[i,j][2]) for i in range_i, j in range_i]
+    strength = vec(sqrt.(us .^ 2 .+ vs .^ 2))
+    arrows!(ax, xs, ys, us, vs, lengthscale = 50.5, color = strength)
+    fig
+end
 
 
 # ---- save / display --------------------------------------------------

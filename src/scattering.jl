@@ -2,7 +2,7 @@ module Scattering
 
 using LinearAlgebra, AtomicArrays
 export stokes, transmission_reflection_new,   # rename without _new
-       chiral_mirror_metrics
+       chiral_mirror_metrics, chiral_mirror_metrics_new
 
 # ────────────────── 1. Stokes helper ───────────────────────────────────
 """
@@ -50,6 +50,7 @@ Returns
 
 * `(T, R)` (total) if `return_helicity = false`
 * `(Tσ⁺, Tσ⁻, Rσ⁺, Rσ⁻, T, R)` if `return_helicity = true`
+* Note σ⁺ ≡ L, σ⁻ ≡ R
 * plus sampled point arrays when `return_positions = true`.
 """
 function transmission_reflection_new(E::AtomicArrays.field.EMField,
@@ -244,6 +245,18 @@ function chiral_mirror_metrics(Tσp, Tσm, Rσp, Rσm;
             is_chiral = is_chiral && pass_dop && pass_phase,
             pass_dop = pass_dop,
             pass_phase = pass_phase)
+end
+
+function chiral_mirror_metrics_new(R_matrix::Matrix)
+    R_RR = R_matrix[1,1]
+    R_LL = R_matrix[2,2]
+    R_RL = R_matrix[1,2]
+    R_LR = R_matrix[2,1]
+
+    CD_R = (R_RR - R_LL) / (R_RR + R_LL + eps())   # eps to avoid /0
+    HP = (R_RR + R_LL) / (R_RR +R_LL + R_RL + R_LR + eps())
+
+    return (CD_R = CD_R, HP = HP)
 end
 
 # ---------------------------------------------------------------
