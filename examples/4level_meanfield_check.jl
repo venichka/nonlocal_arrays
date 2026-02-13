@@ -74,84 +74,21 @@ function average_values(ops, rho_t)
 end
 
 function population_ops(A::AtomicArrays.FourLevelAtomCollection)
-    P_m1 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
-                     AtomicArrays.fourlevel_quantum.sigmas_ee_[1]) 
-                    for j=1:length(A.atoms)]
-    P_0 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
-                     AtomicArrays.fourlevel_quantum.sigmas_ee_[2]) 
-                    for j=1:length(A.atoms)]
-    P_p1 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
-                     AtomicArrays.fourlevel_quantum.sigmas_ee_[3]) 
-                    for j=1:length(A.atoms)]
-    return P_m1, P_0, P_p1
-end
-
-# u = [σ₋₁¹, σ₀¹, σ₊₁¹, σ₋₁²,..., σ₋₁¹⁺,...,]
-function meanfield_spherical!(du, u, p, t)
-    N = Int(length(u) / 15)
-    w, OmR, Omega, Gamma = p
-    sm = reshape(view(u, 1:3*N), (3, N))
-    sp = reshape(view(u, 3*N+1:2*(3*N)), (3, N))
-    smm = reshape(view(u, 2*(3*N)+1:15*N), (3, 3, N))
-    dsm = reshape(view(du, 1:3*N), (3, N))
-    dsp = reshape(view(du, 3*N+1:2*(3*N)), (3, N))
-    dsmm = reshape(view(du, 2*(3*N)+1:15*N), (3, 3, N))
-    # sigma equations
-    @inbounds for n=1:N
-        for m=1:3
-            dsm[m,n] = (-1im*w[m,n]*sm[m,n])
-            dsp[m,n] = (+1im*w[m,n]*sp[m,n])
-            for m1 = 1:3
-                if m1 == m
-                    s_bar = smm[m1,m,n] - 1 + sum([smm[i,i,n] for i=1:3])
-                    s_bar_p = smm[m,m1,n] - 1 + sum([smm[i,i,n] for i=1:3])
-                else
-                    s_bar = smm[m1,m,n]
-                    s_bar_p = smm[m,m1,n]
-                end
-                dsm[m,n] += -1im*conj(OmR[m1,n])*s_bar
-                dsp[m,n] += +1im*OmR[m1,n]*s_bar_p
-                dsm[m,n] += - 0.5*Gamma[n,n,m,m1]*sm[m1,n]
-                dsp[m,n] += - 0.5*Gamma[n,n,m,m1]*sp[m1,n]
-                for m2 = 1:3
-                    for n2 = 1:N
-                        if n2 == n
-                            continue
-                        end
-                        dsm[m,n] += (1im*Omega[n,n2,m1,m2]+
-                                     0.5*Gamma[n,n2,m1,m2])*s_bar*sm[m2,n2] 
-                        dsp[m,n] += (- 1im*Omega[n,n2,m1,m2]+
-                                     0.5*Gamma[n,n2,m1,m2])*s_bar_p*sp[m2,n2] 
-                    end
-                end
-            end
-        end
-    end
-    # population equations
-    @inbounds for n = 1:N
-        for m = 1:3
-            for m1 = 1:3
-                dsmm[m1,m,n] = (1im*(w[m1,n] - w[m,n])*smm[m1,m,n] -
-                                1im*OmR[m1,n]*sm[m,n] +
-                                1im*conj(OmR[m,n])*sp[m1,n])
-                for m2 = 1:3
-                    dsmm[m1,m,n] += (- 0.5*Gamma[n,n,m2,m1]*smm[m2,m,n] -
-                                     0.5*Gamma[n,n,m,m2]*smm[m1,m2,n])
-                    for n1 = 1:N
-                        if n1 == n
-                            continue
-                        end
-                        dsmm[m1,m,n] += ((1im*Omega[n1,n,m2,m1] -
-                                          0.5*Gamma[n1,n,m2,m1])*
-                                          sp[m2,n1]*sm[m,n] +
-                                         (-1im*Omega[n,n1,m,m2] -
-                                          0.5*Gamma[n,n1,m,m2] )*
-                                          sp[m1,n]*sm[m2,n1])
-                    end
-                end
-            end
-        end
-    end
+    # P_m1 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
+    #                  AtomicArrays.fourlevel_quantum.sigmas_ee_[1]) 
+    #                 for j=1:length(A.atoms)]
+    # P_0 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
+    #                  AtomicArrays.fourlevel_quantum.sigmas_ee_[2]) 
+    #                 for j=1:length(A.atoms)]
+    # P_p1 = SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
+    #                  AtomicArrays.fourlevel_quantum.sigmas_ee_[3]) 
+    #                 for j=1:length(A.atoms)]
+    Ps = [SparseOpType[embed(AtomicArrays.fourlevel_quantum.basis(A), j,
+                     AtomicArrays.fourlevel_quantum.sigmas_eg_[k] * 
+                     AtomicArrays.fourlevel_quantum.sigmas_ge_[l]) 
+                    for j=1:length(A.atoms)] for k=1:3, l=1:3]
+    # return P_m1, P_0, P_p1, P_cross
+    return Ps
 end
 
 # BUILDING THE SYSTEM
@@ -166,7 +103,7 @@ begin
     # ]
     a = 0.6
     positions = AtomicArrays.geometry.rectangle(a, a; Nx=2, Ny=2)
-    positions = rotate_xy_to_xz(positions)
+    # positions = rotate_xy_to_xz(positions)
     N = length(positions)
 
     pols = AtomicArrays.polarizations_spherical(N)
@@ -182,16 +119,17 @@ begin
     )
 
     # Define a plane wave field in +y direction:
-    amplitude = 0.0
+    amplitude = 0.01
     k_mod = 2π
-    angle_k = [0.0, π/2]  # => +y direction
-    polarisation = [1.0, 0.0im, 0.0]
+    # angle_k = [0.0, π/2]  # => +y direction
+    angle_k = [0.0, 0.0]  # => +z direction
+    polarisation = [1.0, 1.0im, 0.0]
     pos_0 = [0.0, 0.0, 0.0]
 
     field = AtomicArrays.field.EMField(amplitude, k_mod, angle_k, polarisation; position_0=pos_0)
     external_drive = AtomicArrays.field.rabi(field, AtomicArrays.field.plane, coll)
 
-    B_f = 0.0
+    B_f = 0.1
     w = [deltas[n]+B_f*m for m = -1:1, n = 1:N]
     Γ = AtomicArrays.interaction.GammaTensor_4level(coll)
     Ω = AtomicArrays.interaction.OmegaTensor_4level(coll)
@@ -220,32 +158,27 @@ end
 
 begin
     av_J = average_values(J_ops, rho_t)
-    P_m1, P_0, P_p1 = population_ops(coll)
+    Ps = population_ops(coll)
 
-    # We'll define arrays to store population vs time: shape = (length(t), N)
-    pop_e_minus = zeros(length(t), N)
-    pop_e_0     = zeros(length(t), N)
-    pop_e_plus  = zeros(length(t), N)
-
-    for n in 1:N
-        for (k, ρ) in enumerate(rho_t)
-            pop_e_minus[k, n] = real(tr(P_m1[n] * ρ))
-            pop_e_0[k, n]     = real(tr(P_0[n] * ρ))
-            pop_e_plus[k, n]  = real(tr(P_p1[n] * ρ))
+    pops_q_t = zeros((3, 3, length(t), N))
+    for i=1:3, j=1:3
+        for n in 1:N
+            for (k, ρ) in enumerate(rho_t)
+                pops_q_t[i,j,k,n] = real(tr(Ps[i,j][n] * ρ))
+            end
         end
     end
 end
 
 # Meanfield time dynamics
 begin
-    u0 = [0.0im for i = 1:15*N]
+    u0 = [0.0im for i = 1:12*N]
     for n = 1:1
-        reshape(view(u0, 2*(3*N)+1:15*N), (3, 3, N))[3,3,n] = 1.0
+        reshape(view(u0, (3*N)+1:12*N), (3, 3, N))[3,3,n] = 1.0
     end
     tspan = (0.0, 200.0)
-    # tspan = [0.0:0.1:200.0;]
     p = (w, external_drive, Ω, Γ)
-    prob = ODEProblem(meanfield_spherical!, u0, tspan, p)
+    prob = ODEProblem(AtomicArrays.fourlevel_meanfield.f_sym, u0, tspan, p)
     sol = solve(prob)
 end
 
@@ -277,11 +210,11 @@ end
 t = [0.0:0.1:200.0;]
 
 begin
-    p_e_minus_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[1,1,j])
+    p_e_minus_mf = [real(reshape(view(sol(i),(3*N)+1:12*N), (3, 3, N))[1,1,j])
                     for i in t, j = 1:N]
-    p_e_0_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[2,2,j])
+    p_e_0_mf = [real(reshape(view(sol(i),(3*N)+1:12*N), (3, 3, N))[2,2,j])
                     for i in t, j = 1:N]
-    p_e_plus_mf = [real(reshape(view(sol(i),2*(3*N)+1:15*N), (3, 3, N))[3,3,j])
+    p_e_plus_mf = [real(reshape(view(sol(i),(3*N)+1:12*N), (3, 3, N))[3,3,j])
                     for i in t, j = 1:N]
     s_e_minus_mf = [reshape(view(sol(i),1:3*N), (3, N))[1,j]
                     for i in t, j = 1:N]
@@ -301,11 +234,11 @@ let
     colors_mf = cgrad(:viridis, N, categorical=true)
     # Plot sublevels
     for n in 1:N
-        lines!(ax1, t, pop_e_minus[:,n], label="Atom $n, q", color=colors[n], linewidth=2)
+        lines!(ax1, t, pops_q_t[1,1,:,n], label="Atom $n, q", color=colors[n], linewidth=2)
         lines!(ax1, t, p_e_minus_mf[:, n], label="Atom $n, mf", color=colors_mf[n], linewidth=2)
-        lines!(ax2, t, pop_e_0[:,n], label="Atom $n", color=colors[n], linewidth=2)
+        lines!(ax2, t, pops_q_t[2,2,:,n], label="Atom $n", color=colors[n], linewidth=2)
         lines!(ax2, t, p_e_0_mf[:, n], label="Atom $n, mf", color=colors_mf[n], linewidth=2)
-        lines!(ax3, t, pop_e_plus[:,n], label="Atom $n", color=colors[n], linewidth=2)
+        lines!(ax3, t, pops_q_t[3,3,:,n], label="Atom $n", color=colors[n], linewidth=2)
         lines!(ax3, t, p_e_plus_mf[:, n], label="Atom $n, mf", color=colors_mf[n], linewidth=2)
     end
     # Add legend
@@ -314,7 +247,7 @@ let
 end
 
 
-plot_populations(pop_e_minus, pop_e_0, pop_e_plus, t)
+plot_populations(pops_q_t[1,2,:,:], pops_q_t[1,3,:,:], pops_q_t[2,3,:,:], t)
 plot_populations(p_e_minus_mf, p_e_0_mf, p_e_plus_mf, t)
 
 let 

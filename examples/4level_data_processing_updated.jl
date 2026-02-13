@@ -28,8 +28,8 @@ Base.@kwdef mutable struct Config
 
     # --- sweep sub-selection ------------------------------------------
     fixed::Dict{String,Any} = Dict(
-        "a"           => 0.3181818181818182,           # lattice const
-        "deltas"      => 0.16363636363636364,#0.12727272727272726,#0.05454545454545454,
+        "a"           => 0.2803030303030303,#0.803030303030303,#0.3181818181818182, # 0.803030303030303,         # lattice const
+        "deltas"      => 0.01818181818181818,#0.16363636363636364,#0.12727272727272726,#0.05454545454545454,
         "Bz"          => 0.2,           # Zeeman field
         "amplitude"   => 0.02,           # drive
         "anglek"      => [0.0, 0.0],     # incidence
@@ -297,7 +297,9 @@ a  = cfg.fixed["a"]
 fig_B = Figure(size=(800,400))
 axω   = Axis(fig_B[1,1]; ylabel="ω", xticks=(s[[1,cfg.Nk_path+1,2cfg.Nk_path+1,end]],
                                             ["M","Γ","X","M"]))
-axγ   = Axis(fig_B[2,1]; ylabel="γ", xticklabelsvisible=false)
+axγ   = Axis(fig_B[2,1]; ylabel="γ", xticklabelsvisible=false, 
+             limits=(nothing, (-0.1, 1))
+             )
 for b in 1:3
     lines!(axω, s, ω[b,:]; linewidth=2)
     lines!(axγ, s, γk[b,:]; linewidth=2)
@@ -305,6 +307,48 @@ end
 vlines!(axω, s[[1,cfg.Nk_path+1,2cfg.Nk_path+1,end]]; color=:grey, linestyle=:dash)
 vlines!(axγ, s[[1,cfg.Nk_path+1,2cfg.Nk_path+1,end]]; color=:grey, linestyle=:dash)
 fig_B
+end
+
+
+ωbands, γbands, kx_vec, ky_vec = GeomField.bands_2d_grid(; a=a, μ=μ, γ=γ,
+                                                 Δ=Δ,
+                                                 Nkx=181, Nky=181, Nmax=60,
+                                                 fullBZ=true, keep_k=true,
+                                                 return_gamma=true)
+let
+    # ── visual settings ──────────────────────────────────────────────
+    cmap   = :inferno
+    titles = ["Band 1", "Band 2", "Band 3"]
+
+    # Makie wants (x, y) indexing, so transpose iy/ix slice
+    band_data = (ωbands[1, :, :]',
+                 ωbands[2, :, :]',
+                 ωbands[3, :, :]')
+    decay_data = (γbands[1, :, :]',
+                  γbands[2, :, :]',
+                  γbands[3, :, :]')
+
+    # Figure: 1 row, 6 columns  (Axis | Colorbar) × 3
+    fig = Figure(size = (1500, 2*360))
+    for i in 1:2, b in 1:3
+        col_ax  = 2b - 1             #   1,3,5
+        col_cb  = 2b                 #   2,4,6
+
+        ax = Axis(fig[i, col_ax];
+                  xlabel = "kₓ (π·a⁻¹)",
+                  ylabel = "kᵧ (π·a⁻¹)",
+                  title  = (i==1) ? titles[b] : "",
+                  aspect = DataAspect())
+
+        hm = heatmap!(ax, a/pi*kx_vec, a/pi*ky_vec, 
+                      (i==1) ? band_data[b] : decay_data[b];
+                      colormap = cmap)
+
+        Colorbar(fig[i, col_cb], hm;
+                 label = (i==1) ? "ω(k) (rad·s⁻¹)" : "γ(k) (rad·s⁻¹)")
+    end
+
+    fig                               # display; call save("bands2d.png", fig) if desired
 end
 
 begin
